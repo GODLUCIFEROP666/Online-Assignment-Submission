@@ -1,0 +1,20 @@
+# Ignore backend and legacy PHP FINAL2 directories (as you only want to push the frontend folder)
+backend/
+FINAL2/
+.venv/
+
+# Ignore Next.js frontend dependencies and build outputs
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/tsconfig.tsbuildinfo
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.production.local
+
+# Ignore environment files, logs, and system files
+.env
+*.log
+.DS_Store
+Thumbs.db
