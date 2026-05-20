@@ -63,6 +63,7 @@ export default function StudentDashboardPage() {
 
   async function submitAssignment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setSubmitting(true);
     setMessage(null);
     const uploadError = validateUpload(upload);
@@ -89,7 +90,9 @@ export default function StudentDashboardPage() {
       setDetails("");
       setUpload(null);
       setSubject("");
-      event.currentTarget.reset();
+      if (formElement) {
+        formElement.reset();
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Assignment submission failed");
     } finally {

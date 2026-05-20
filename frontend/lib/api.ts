@@ -52,7 +52,20 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     let detail = `API request failed: ${response.status}`;
     try {
       const errorBody = await response.json();
-      detail = errorBody?.detail || errorBody?.message || detail;
+      if (errorBody?.detail) {
+        if (Array.isArray(errorBody.detail)) {
+          detail = errorBody.detail.map((err: any) => {
+            const field = err.loc ? err.loc[err.loc.length - 1] : "field";
+            return `${field}: ${err.msg}`;
+          }).join(", ");
+        } else if (typeof errorBody.detail === "object") {
+          detail = JSON.stringify(errorBody.detail);
+        } else {
+          detail = errorBody.detail;
+        }
+      } else if (errorBody?.message) {
+        detail = errorBody.message;
+      }
     } catch {
       const text = await response.text();
       if (text) detail = text;
