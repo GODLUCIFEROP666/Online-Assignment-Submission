@@ -3,13 +3,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_claims
 from app.core.config import get_settings
-from app.db.models import Admin, Assignment, User
-from app.db.session import get_db
+from app.db.session import get_mongodb_db, get_next_sequence_value
 from app.schemas.assignments import AssignmentReview
 from app.services.file_service import uploads_dir
 
@@ -29,43 +26,68 @@ ALLOWED_UPLOAD_TYPES = {
 }
 
 
-def _assignment_payload(assignment: Assignment) -> dict[str, object]:
+def _assignment_payload(assignment: dict) -> dict[str, object]:
+    submit_date = assignment.get("submit_date")
+    submit_time = assignment.get("submit_time")
+    graded_at = assignment.get("graded_at")
+    
+    if isinstance(submit_date, datetime):
+        submit_date_str = submit_date.date().isoformat()
+    elif hasattr(submit_date, "isoformat"):
+        submit_date_str = submit_date.isoformat()
+    else:
+        submit_date_str = submit_date
+
+    if isinstance(submit_time, datetime):
+        submit_time_str = submit_time.time().isoformat()
+    elif hasattr(submit_time, "isoformat"):
+        submit_time_str = submit_time.isoformat()
+    else:
+        submit_time_str = submit_time
+
+    if isinstance(graded_at, datetime):
+        graded_at_str = graded_at.isoformat()
+    elif hasattr(graded_at, "isoformat"):
+        graded_at_str = graded_at.isoformat()
+    else:
+        graded_at_str = graded_at
+
     return {
-        "id": assignment.id,
-        "user_id": assignment.user_id,
-        "student_name": assignment.student_name,
-        "college_name": assignment.college_name,
-        "year": assignment.year,
-        "seat_no": assignment.seat_no,
-        "subject": assignment.subject,
-        "title": assignment.title,
-        "details": assignment.details,
-        "file_name": assignment.file_name,
-        "status": assignment.status,
-        "submit_date": assignment.submit_date.isoformat() if assignment.submit_date else None,
-        "submit_time": assignment.submit_time.isoformat() if assignment.submit_time else None,
-        "teacher_note": assignment.teacher_note,
-        "marks": float(assignment.marks or 0),
-        "graded_by": assignment.graded_by,
-        "graded_at": assignment.graded_at.isoformat() if assignment.graded_at else None,
+        "id": assignment.get("id"),
+        "user_id": assignment.get("user_id"),
+        "student_name": assignment.get("student_name"),
+        "college_name": assignment.get("college_name"),
+        "year": assignment.get("year"),
+        "seat_no": assignment.get("seat_no"),
+        "subject": assignment.get("subject"),
+        "title": assignment.get("title"),
+        "details": assignment.get("details"),
+        "file_name": assignment.get("file_name"),
+        "status": assignment.get("status"),
+        "submit_date": submit_date_str,
+        "submit_time": submit_time_str,
+        "teacher_note": assignment.get("teacher_note"),
+        "marks": float(assignment.get("marks") or 0.0),
+        "graded_by": assignment.get("graded_by"),
+        "graded_at": graded_at_str,
     }
 
 
-def _current_student(db: Session, claims: dict) -> User:
+async def _current_student(db, claims: dict) -> dict:
     user_id = claims.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student access required")
-    user = db.query(User).filter(User.id == user_id).first()
+    user = await db.users.find_one({"id": user_id})
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
     return user
 
 
-def _current_admin(db: Session, claims: dict) -> Admin:
+async def _current_admin(db, claims: dict) -> dict:
     admin_id = claims.get("admin_id")
     if not admin_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    admin = db.query(Admin).filter(Admin.id == admin_id).first()
+    admin = await db.admins.find_one({"id": admin_id})
     if not admin:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found")
     return admin
@@ -77,29 +99,31 @@ async def list_assignments(
     mine: bool = True,
     status_filter: str | None = None,
     subject: str | None = None,
-    db: Session = Depends(get_db),
+    db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     role = claims.get("role")
-    query = db.query(Assignment)
+    query = {}
 
     if role == "student":
-        user = _current_student(db, claims)
-        query = query.filter(or_(Assignment.user_id == user.id, Assignment.seat_no == user.seat_no))
+        user = await _current_student(db, claims)
+        query["$or"] = [
+            {"user_id": user.get("id")},
+            {"seat_no": user.get("seat_no")}
+        ]
     elif role == "teacher":
-        admin = _current_admin(db, claims)
-        if mine:
-            query = query.filter(Assignment.college_name == admin.college)
-        else:
-            query = query.filter(Assignment.college_name == admin.college)
+        admin = await _current_admin(db, claims)
+        query["college_name"] = admin.get("college")
     elif role != "superadmin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
 
     if status_filter:
-        query = query.filter(Assignment.status == status_filter)
+        query["status"] = status_filter
     if subject:
-        query = query.filter(Assignment.subject == subject)
+        query["subject"] = subject
 
-    items = [_assignment_payload(assignment) for assignment in query.order_by(Assignment.id.desc()).all()]
+    cursor = db.assignments.find(query).sort("id", -1)
+    assignments = await cursor.to_list(length=None)
+    items = [_assignment_payload(assignment) for assignment in assignments]
     return {"status": "success", "items": items, "count": len(items)}
 
 
@@ -110,9 +134,9 @@ async def create_assignment(
     details: str | None = Form(default=None),
     upload: UploadFile | None = File(default=None),
     claims: dict = Depends(get_current_claims),
-    db: Session = Depends(get_db),
+    db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
-    user = _current_student(db, claims)
+    user = await _current_student(db, claims)
     saved_name = None
     if upload and upload.filename:
         suffix = Path(upload.filename).suffix.lower()
@@ -133,48 +157,54 @@ async def create_assignment(
         file_path.write_bytes(content)
         saved_name = safe_name
 
-    assignment = Assignment(
-        user_id=user.id,
-        student_name=user.full_name,
-        college_name=user.college,
-        year=user.course_year,
-        seat_no=user.seat_no,
-        subject=subject,
-        title=title,
-        details=details,
-        file_name=saved_name,
-        status="Pending",
-        submit_date=date.today(),
-        submit_time=datetime.now().time().replace(microsecond=0),
-        teacher_note=None,
-        marks=0,
-        graded_by=None,
-        graded_at=None,
-    )
-    db.add(assignment)
-    db.commit()
-    db.refresh(assignment)
-    return {"status": "success", "message": "Assignment submitted", "assignment": _assignment_payload(assignment)}
+    assignment_id = await get_next_sequence_value(db, "assignments")
+    
+    submit_date = datetime.combine(date.today(), datetime.min.time())
+    submit_time = datetime.now().replace(microsecond=0)
+
+    assignment_doc = {
+        "id": assignment_id,
+        "user_id": user.get("id"),
+        "student_name": user.get("full_name"),
+        "college_name": user.get("college"),
+        "year": user.get("course_year"),
+        "seat_no": user.get("seat_no"),
+        "subject": subject,
+        "title": title,
+        "details": details,
+        "file_name": saved_name,
+        "status": "Pending",
+        "submit_date": submit_date,
+        "submit_time": submit_time,
+        "teacher_note": None,
+        "marks": 0.0,
+        "graded_by": None,
+        "graded_at": None,
+    }
+    
+    await db.assignments.insert_one(assignment_doc)
+    return {"status": "success", "message": "Assignment submitted", "assignment": _assignment_payload(assignment_doc)}
 
 
 @router.delete("/{assignment_id}", status_code=status.HTTP_200_OK)
 async def delete_assignment(
     assignment_id: int,
     claims: dict = Depends(get_current_claims),
-    db: Session = Depends(get_db),
+    db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
-    user = _current_student(db, claims)
-    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+    user = await _current_student(db, claims)
+    assignment = await db.assignments.find_one({"id": assignment_id})
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
-    if assignment.user_id not in (None, user.id) and assignment.seat_no != user.seat_no:
+    if assignment.get("user_id") not in (None, user.get("id")) and assignment.get("seat_no") != user.get("seat_no"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own submission")
-    if assignment.file_name:
-        file_path = uploads_dir() / assignment.file_name
+    
+    if assignment.get("file_name"):
+        file_path = uploads_dir() / assignment.get("file_name")
         if file_path.exists():
             file_path.unlink()
-    db.delete(assignment)
-    db.commit()
+            
+    await db.assignments.delete_one({"id": assignment_id})
     return {"status": "success", "message": "Assignment deleted"}
 
 
@@ -183,24 +213,32 @@ async def review_assignment(
     assignment_id: int,
     payload: AssignmentReview,
     claims: dict = Depends(get_current_claims),
-    db: Session = Depends(get_db),
+    db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     if payload.status not in ALLOWED_STATUSES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid assignment status")
 
-    admin = _current_admin(db, claims)
-    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+    admin = await _current_admin(db, claims)
+    assignment = await db.assignments.find_one({"id": assignment_id})
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
 
-    if admin.role == "teacher" and admin.college and assignment.college_name and assignment.college_name != admin.college:
+    if admin.get("role") == "teacher" and admin.get("college") and assignment.get("college_name") and assignment.get("college_name") != admin.get("college"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher can only review assignments from assigned college")
 
-    assignment.status = payload.status
-    assignment.marks = payload.marks
-    assignment.teacher_note = payload.teacher_note
-    assignment.graded_by = admin.username
-    assignment.graded_at = datetime.utcnow()
-    db.commit()
-    db.refresh(assignment)
-    return {"status": "success", "message": "Assignment reviewed", "assignment": _assignment_payload(assignment)}
+    update_doc = {
+        "status": payload.status,
+        "marks": payload.marks,
+        "teacher_note": payload.teacher_note,
+        "graded_by": admin.get("username"),
+        "graded_at": datetime.utcnow()
+    }
+
+    await db.assignments.update_one(
+        {"id": assignment_id},
+        {"$set": update_doc}
+    )
+    
+    updated_assignment = await db.assignments.find_one({"id": assignment_id})
+    return {"status": "success", "message": "Assignment reviewed", "assignment": _assignment_payload(updated_assignment)}
+

@@ -9,7 +9,8 @@ class Settings(BaseSettings):
 
     app_name: str = "FINAL2 API"
     app_env: str = "development"
-    database_url: str = "mysql+mysqlconnector://root:@localhost/final"
+    mongodb_uri: str = "mongodb://localhost:27017"
+    mongodb_db_name: str = "final"
     jwt_secret: str = "change-me"
     jwt_refresh_secret: str = "change-me-too"
     jwt_access_expires_minutes: int = 30
@@ -23,10 +24,6 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     upload_dir: str = "./uploads"
     max_upload_mb: int = 25
-    analytics_db_host: str = "localhost"
-    analytics_db_user: str = "root"
-    analytics_db_password: str = ""
-    analytics_db_name: str = "final"
 
     @property
     def cors_origin_list(self) -> List[str]:

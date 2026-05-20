@@ -1,10 +1,9 @@
 from collections.abc import Callable
 
 from fastapi import Cookie, Depends, Header, HTTPException, status
-from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token, decode_refresh_token
-from app.db.session import get_db
+from app.db.session import get_mongodb_db
 
 
 def get_bearer_token(authorization: str | None = Header(default=None)) -> str | None:
@@ -34,5 +33,6 @@ def get_current_claims(token: str | None = Depends(get_access_token_from_request
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
 
-def db_session() -> Callable[[], Session]:
-    return get_db
+def db_session() -> Callable:
+    return get_mongodb_db
+

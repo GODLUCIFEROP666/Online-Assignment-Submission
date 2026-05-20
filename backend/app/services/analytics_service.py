@@ -1,56 +1,55 @@
 from __future__ import annotations
-
-from collections.abc import Iterable
-
 import pandas as pd
-from sqlalchemy.orm import Session
-
 from app.analytics import ml_models
-from app.db.models import Assignment, User
 
-
-def _assignment_rows(db: Session) -> list[dict[str, object]]:
-    users_by_id = {user.id: user for user in db.query(User).all()}
-    users_by_seat = {user.seat_no: user for user in users_by_id.values()}
+async def _assignment_rows(db) -> list[dict[str, object]]:
+    # Get all users
+    users_cursor = db.users.find()
+    users = await users_cursor.to_list(length=None)
+    users_by_id = {user["id"]: user for user in users}
+    users_by_seat = {user["seat_no"]: user for user in users if "seat_no" in user}
+    
     rows: list[dict[str, object]] = []
+    assignments_cursor = db.assignments.find().sort("id", 1)
+    assignments = await assignments_cursor.to_list(length=None)
 
-    for assignment in db.query(Assignment).order_by(Assignment.id.asc()).all():
-        user = users_by_id.get(assignment.user_id) if assignment.user_id else None
-        if not user and assignment.seat_no:
-            user = users_by_seat.get(assignment.seat_no)
+    for assignment in assignments:
+        user = users_by_id.get(assignment.get("user_id")) if assignment.get("user_id") else None
+        if not user and assignment.get("seat_no"):
+            user = users_by_seat.get(assignment["seat_no"])
 
         rows.append(
             {
-                "assignment_id": assignment.id,
-                "student_id": user.id if user else assignment.user_id,
-                "username": user.username if user else None,
-                "full_name": user.full_name if user else assignment.student_name,
-                "college": assignment.college_name or (user.college if user else None),
-                "course_year": assignment.year or (user.course_year if user else None),
-                "seat_no": assignment.seat_no or (user.seat_no if user else None),
-                "subject": assignment.subject,
-                "title": assignment.title,
-                "details": assignment.details,
-                "status": assignment.status,
-                "marks": assignment.marks,
-                "submit_date": assignment.submit_date,
-                "submit_time": assignment.submit_time,
-                "teacher_note": assignment.teacher_note,
-                "graded_by": assignment.graded_by,
-                "graded_at": assignment.graded_at,
+                "assignment_id": assignment["id"],
+                "student_id": user["id"] if user else assignment.get("user_id"),
+                "username": user["username"] if user else None,
+                "full_name": user["full_name"] if user else assignment.get("student_name"),
+                "college": assignment.get("college_name") or (user.get("college") if user else None),
+                "course_year": assignment.get("year") or (user.get("course_year") if user else None),
+                "seat_no": assignment.get("seat_no") or (user.get("seat_no") if user else None),
+                "subject": assignment.get("subject"),
+                "title": assignment.get("title"),
+                "details": assignment.get("details"),
+                "status": assignment.get("status"),
+                "marks": assignment.get("marks"),
+                "submit_date": assignment.get("submit_date"),
+                "submit_time": assignment.get("submit_time"),
+                "teacher_note": assignment.get("teacher_note"),
+                "graded_by": assignment.get("graded_by"),
+                "graded_at": assignment.get("graded_at"),
             }
         )
 
     return rows
 
 
-def _frame(db: Session) -> pd.DataFrame:
-    rows = _assignment_rows(db)
+async def _frame(db) -> pd.DataFrame:
+    rows = await _assignment_rows(db)
     return pd.DataFrame(rows)
 
 
-def _filtered_frame(db: Session, college: str | None = None, course: str | None = None, subject: str | None = None) -> pd.DataFrame:
-    frame = _frame(db)
+async def _filtered_frame(db, college: str | None = None, course: str | None = None, subject: str | None = None) -> pd.DataFrame:
+    frame = await _frame(db)
     if frame.empty:
         return frame
     if college:
@@ -62,8 +61,8 @@ def _filtered_frame(db: Session, college: str | None = None, course: str | None 
     return frame
 
 
-def analytics_overview(db: Session, college: str | None = None, course: str | None = None, subject: str | None = None) -> dict[str, object]:
-    frame = _filtered_frame(db, college=college, course=course, subject=subject)
+async def analytics_overview(db, college: str | None = None, course: str | None = None, subject: str | None = None) -> dict[str, object]:
+    frame = await _filtered_frame(db, college=college, course=course, subject=subject)
     if frame.empty:
         return {"status": "success", "data": {"assignments": 0, "students": 0, "teachers": 0, "pending": 0, "pass_probability": []}}
 
@@ -81,25 +80,25 @@ def analytics_overview(db: Session, college: str | None = None, course: str | No
     }
 
 
-def performance_predictions(db: Session, college: str | None = None, course: str | None = None, subject: str | None = None) -> dict[str, object]:
-    frame = _filtered_frame(db, college=college, course=course, subject=subject)
+async def performance_predictions(db, college: str | None = None, course: str | None = None, subject: str | None = None) -> dict[str, object]:
+    frame = await _filtered_frame(db, college=college, course=course, subject=subject)
     return {"status": "success", "data": ml_models.predict_performance(frame)}
 
 
-def student_clusters(db: Session, college: str | None = None, course: str | None = None, subject: str | None = None) -> dict[str, object]:
-    frame = _filtered_frame(db, college=college, course=course, subject=subject)
+async def student_clusters(db, college: str | None = None, course: str | None = None, subject: str | None = None) -> dict[str, object]:
+    frame = await _filtered_frame(db, college=college, course=course, subject=subject)
     return {"status": "success", "data": ml_models.cluster_students(frame)}
 
 
-def student_analytics(db: Session, username: str) -> dict[str, object]:
-    frame = _frame(db)
+async def student_analytics(db, username: str) -> dict[str, object]:
+    frame = await _frame(db)
     if frame.empty:
         return {"status": "success", "data": {"error": "No data found"}}
     return {"status": "success", "data": ml_models.analyze_student(frame, username)}
 
 
-def teacher_analytics(db: Session, username: str) -> dict[str, object]:
-    frame = _frame(db)
+async def teacher_analytics(db, username: str) -> dict[str, object]:
+    frame = await _frame(db)
     if frame.empty:
         return {"status": "success", "data": {"error": "No data found"}}
     return {"status": "success", "data": ml_models.analyze_teacher(frame, username)}

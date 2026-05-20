@@ -1,14 +1,11 @@
 from io import StringIO
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_claims
-from app.core.security import auth_cookie_kwargs
-from app.core.security import hash_password
-from app.db.models import Admin, Assignment, User
-from app.db.session import get_db
+from app.core.security import auth_cookie_kwargs, hash_password
+from app.db.session import get_mongodb_db, get_next_sequence_value
 from app.schemas.admin import AdminLoginRequest, TeacherCreateRequest, TeacherPasswordUpdateRequest
 from app.services.auth_service import build_token_pair
 
@@ -29,23 +26,23 @@ def _require_superadmin(claims: dict) -> dict:
 
 
 @router.post("/auth/login", status_code=status.HTTP_200_OK)
-async def login(payload: AdminLoginRequest, response: Response, db: Session = Depends(get_db)) -> dict[str, object]:
-    admin = db.query(Admin).filter(or_(Admin.username == payload.username, Admin.email == payload.username)).first()
-    if not admin or admin.role not in {"teacher", "superadmin"}:
+async def login(payload: AdminLoginRequest, response: Response, db = Depends(get_mongodb_db)) -> dict[str, object]:
+    admin = await db.admins.find_one({"$or": [{"username": payload.username}, {"email": payload.username}]})
+    if not admin or admin.get("role") not in {"teacher", "superadmin"}:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
 
     from app.core.security import verify_password
 
-    if not verify_password(payload.password, admin.password):
+    if not verify_password(payload.password, admin.get("password")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
 
-    claims = {"role": admin.role, "admin_id": admin.id, "username": admin.username, "college": admin.college, "course": admin.course}
-    tokens = build_token_pair(str(admin.id), claims)
+    claims = {"role": admin.get("role"), "admin_id": admin.get("id"), "username": admin.get("username"), "college": admin.get("college"), "course": admin.get("course")}
+    tokens = build_token_pair(str(admin.get("id")), claims)
     response.set_cookie("refresh_token", tokens["refresh_token"], **auth_cookie_kwargs())
     return {
         "status": "success",
-        "role": admin.role,
-        "admin": {"id": admin.id, "username": admin.username, "name": admin.name},
+        "role": admin.get("role"),
+        "admin": {"id": admin.get("id"), "username": admin.get("username"), "name": admin.get("name")},
         "access_token": tokens["access_token"],
     }
 
@@ -57,12 +54,12 @@ async def logout(response: Response) -> dict[str, str]:
 
 
 @router.get("/overview", status_code=status.HTTP_200_OK)
-async def overview(claims: dict = Depends(get_current_claims), db: Session = Depends(get_db)) -> dict[str, object]:
+async def overview(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
     _require_admin(claims)
-    user_count = db.query(func.count(User.id)).scalar() or 0
-    teacher_count = db.query(func.count(Admin.id)).filter(Admin.role == "teacher").scalar() or 0
-    assignment_count = db.query(func.count(Assignment.id)).scalar() or 0
-    pending_count = db.query(func.count(Assignment.id)).filter(Assignment.status == "Pending").scalar() or 0
+    user_count = await db.users.count_documents({})
+    teacher_count = await db.admins.count_documents({"role": "teacher"})
+    assignment_count = await db.assignments.count_documents({})
+    pending_count = await db.assignments.count_documents({"status": "Pending"})
     return {
         "status": "success",
         "data": {
@@ -75,40 +72,44 @@ async def overview(claims: dict = Depends(get_current_claims), db: Session = Dep
 
 
 @router.get("/students", status_code=status.HTTP_200_OK)
-async def students(claims: dict = Depends(get_current_claims), db: Session = Depends(get_db)) -> dict[str, object]:
+async def students(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
     _require_admin(claims)
+    cursor = db.users.find().sort("id", -1)
+    users = await cursor.to_list(length=None)
     items = [
         {
-            "id": user.id,
-            "full_name": user.full_name,
-            "username": user.username,
-            "email": user.email,
-            "phone": user.phone,
-            "college": user.college,
-            "course_year": user.course_year,
-            "seat_no": user.seat_no,
-            "is_email_verified": bool(user.is_email_verified),
-            "is_phone_verified": bool(user.is_phone_verified),
+            "id": user.get("id"),
+            "full_name": user.get("full_name"),
+            "username": user.get("username"),
+            "email": user.get("email"),
+            "phone": user.get("phone"),
+            "college": user.get("college"),
+            "course_year": user.get("course_year"),
+            "seat_no": user.get("seat_no"),
+            "is_email_verified": bool(user.get("is_email_verified")),
+            "is_phone_verified": bool(user.get("is_phone_verified")),
         }
-        for user in db.query(User).order_by(User.id.desc()).all()
+        for user in users
     ]
     return {"status": "success", "items": items, "count": len(items)}
 
 
 @router.get("/teachers", status_code=status.HTTP_200_OK)
-async def teachers(claims: dict = Depends(get_current_claims), db: Session = Depends(get_db)) -> dict[str, object]:
+async def teachers(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
     _require_admin(claims)
+    cursor = db.admins.find({"role": {"$in": ["teacher", "superadmin"]}}).sort("id", -1)
+    admins = await cursor.to_list(length=None)
     items = [
         {
-            "id": admin.id,
-            "name": admin.name,
-            "username": admin.username,
-            "email": admin.email,
-            "role": admin.role,
-            "college": admin.college,
-            "course": admin.course,
+            "id": admin.get("id"),
+            "name": admin.get("name"),
+            "username": admin.get("username"),
+            "email": admin.get("email"),
+            "role": admin.get("role"),
+            "college": admin.get("college"),
+            "course": admin.get("course"),
         }
-        for admin in db.query(Admin).filter(Admin.role.in_(["teacher", "superadmin"])).order_by(Admin.id.desc()).all()
+        for admin in admins
     ]
     return {"status": "success", "items": items, "count": len(items)}
 
@@ -117,29 +118,31 @@ async def teachers(claims: dict = Depends(get_current_claims), db: Session = Dep
 async def create_teacher(
     payload: TeacherCreateRequest,
     claims: dict = Depends(get_current_claims),
-    db: Session = Depends(get_db),
+    db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     _require_superadmin(claims)
-    duplicate = db.query(Admin.id).filter(or_(Admin.username == payload.username, Admin.email == payload.email)).first()
+    duplicate = await db.admins.find_one({"$or": [{"username": payload.username}, {"email": payload.email}]})
     if duplicate:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Teacher username or email already exists")
 
-    admin = Admin(
-        name=payload.name,
-        username=payload.username,
-        email=payload.email,
-        password=hash_password(payload.password),
-        role="teacher",
-        college=payload.college,
-        course=payload.course,
-    )
-    db.add(admin)
-    db.commit()
-    db.refresh(admin)
+    teacher_id = await get_next_sequence_value(db, "admins")
+    admin = {
+        "id": teacher_id,
+        "name": payload.name,
+        "username": payload.username,
+        "email": payload.email,
+        "password": hash_password(payload.password),
+        "role": "teacher",
+        "college": payload.college,
+        "course": payload.course,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+    }
+    await db.admins.insert_one(admin)
     return {
         "status": "success",
         "message": "Teacher created",
-        "teacher": {"id": admin.id, "username": admin.username, "email": admin.email},
+        "teacher": {"id": admin.get("id"), "username": admin.get("username"), "email": admin.get("email")},
     }
 
 
@@ -147,14 +150,13 @@ async def create_teacher(
 async def delete_teacher(
     teacher_id: int,
     claims: dict = Depends(get_current_claims),
-    db: Session = Depends(get_db),
+    db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     _require_superadmin(claims)
-    teacher = db.query(Admin).filter(Admin.id == teacher_id, Admin.role == "teacher").first()
+    teacher = await db.admins.find_one({"id": teacher_id, "role": "teacher"})
     if not teacher:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher not found")
-    db.delete(teacher)
-    db.commit()
+    await db.admins.delete_one({"id": teacher_id})
     return {"status": "success", "message": "Teacher deleted"}
 
 
@@ -163,55 +165,67 @@ async def reset_teacher_password(
     teacher_id: int,
     payload: TeacherPasswordUpdateRequest,
     claims: dict = Depends(get_current_claims),
-    db: Session = Depends(get_db),
+    db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     _require_superadmin(claims)
-    teacher = db.query(Admin).filter(Admin.id == teacher_id, Admin.role == "teacher").first()
+    teacher = await db.admins.find_one({"id": teacher_id, "role": "teacher"})
     if not teacher:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher not found")
-    teacher.password = hash_password(payload.new_password)
-    db.commit()
+    await db.admins.update_one({"id": teacher_id}, {"$set": {"password": hash_password(payload.new_password)}})
     return {"status": "success", "message": "Teacher password updated"}
 
 
 @router.get("/assignments", status_code=status.HTTP_200_OK)
-async def assignments(claims: dict = Depends(get_current_claims), db: Session = Depends(get_db)) -> dict[str, object]:
+async def assignments(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
     admin_claims = _require_admin(claims)
-    query = db.query(Assignment)
+    query = {}
     if admin_claims.get("role") == "teacher":
-        query = query.filter(Assignment.college_name == admin_claims.get("college"))
-    items = [
-        {
-            "id": assignment.id,
-            "student_name": assignment.student_name,
-            "college_name": assignment.college_name,
-            "year": assignment.year,
-            "seat_no": assignment.seat_no,
-            "subject": assignment.subject,
-            "title": assignment.title,
-            "file_name": assignment.file_name,
-            "status": assignment.status,
-            "marks": float(assignment.marks or 0),
-            "teacher_note": assignment.teacher_note,
-            "graded_by": assignment.graded_by,
-            "graded_at": assignment.graded_at.isoformat() if assignment.graded_at else None,
-        }
-        for assignment in query.order_by(Assignment.id.desc()).all()
-    ]
+        query["college_name"] = admin_claims.get("college")
+        
+    cursor = db.assignments.find(query).sort("id", -1)
+    assignments_list = await cursor.to_list(length=None)
+    items = []
+    for assignment in assignments_list:
+        graded_at = assignment.get("graded_at")
+        if isinstance(graded_at, datetime):
+            graded_at_str = graded_at.isoformat()
+        elif hasattr(graded_at, "isoformat"):
+            graded_at_str = graded_at.isoformat()
+        else:
+            graded_at_str = graded_at
+
+        items.append({
+            "id": assignment.get("id"),
+            "student_name": assignment.get("student_name"),
+            "college_name": assignment.get("college_name"),
+            "year": assignment.get("year"),
+            "seat_no": assignment.get("seat_no"),
+            "subject": assignment.get("subject"),
+            "title": assignment.get("title"),
+            "file_name": assignment.get("file_name"),
+            "status": assignment.get("status"),
+            "marks": float(assignment.get("marks") or 0.0),
+            "teacher_note": assignment.get("teacher_note"),
+            "graded_by": assignment.get("graded_by"),
+            "graded_at": graded_at_str,
+        })
     return {"status": "success", "items": items, "count": len(items)}
 
 
 @router.get("/export/students.csv", status_code=status.HTTP_200_OK)
-async def export_students(claims: dict = Depends(get_current_claims), db: Session = Depends(get_db)) -> Response:
+async def export_students(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> Response:
     _require_superadmin(claims)
+    cursor = db.users.find().sort("id", 1)
+    users = await cursor.to_list(length=None)
     buffer = StringIO()
     buffer.write("id,full_name,username,email,phone,college,course_year,seat_no\n")
-    for user in db.query(User).order_by(User.id.asc()).all():
+    for user in users:
         buffer.write(
-            f'{user.id},"{user.full_name}","{user.username}","{user.email}","{user.phone or ""}","{user.college or ""}","{user.course_year or ""}","{user.seat_no}"\n'
+            f'{user.get("id")},"{user.get("full_name")}","{user.get("username")}","{user.get("email")}","{user.get("phone") or ""}","{user.get("college") or ""}","{user.get("course_year") or ""}","{user.get("seat_no")}"\n'
         )
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="students.csv"'},
     )
+

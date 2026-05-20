@@ -1,8 +1,7 @@
 from fastapi import FastAPI
 
 from app.core.cors import configure_cors
-from app.db.session import SessionLocal
-from app.db.session import Base, engine
+from app.db.session import init_db, close_db, get_mongodb_db
 from app.routers import admin, analytics, assignments, auth, files, notifications, users
 from app.services.demo_service import ensure_demo_admin, ensure_demo_student, ensure_demo_superadmin
 
@@ -24,12 +23,17 @@ async def health_check() -> dict[str, str]:
 
 
 @app.on_event("startup")
-def startup() -> None:
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
+async def startup() -> None:
+    await init_db()
+    db = await get_mongodb_db()
     try:
-        ensure_demo_student(db)
-        ensure_demo_admin(db)
-        ensure_demo_superadmin(db)
-    finally:
-        db.close()
+        await ensure_demo_student(db)
+        await ensure_demo_admin(db)
+        await ensure_demo_superadmin(db)
+    except Exception as e:
+        print(f"Error during seeding: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    await close_db()
