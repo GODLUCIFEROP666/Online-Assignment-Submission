@@ -81,7 +81,7 @@ export default function StudentDashboardPage() {
         formData.append("upload", upload);
       }
 
-      const payload = await apiFetch<AssignmentResponse>("/api/assignments", {
+      const payload = await apiFetch<AssignmentResponse>("/api/assignments/", {
         method: "POST",
         body: formData
       });
