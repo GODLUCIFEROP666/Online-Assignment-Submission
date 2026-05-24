@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { AdminAnalyticsGrid } from "@/components/charts/admin-analytics-grid";
 import { AppShell } from "@/components/shell";
@@ -53,6 +54,25 @@ type AssignmentListResponse = {
   count: number;
 };
 
+type StudentItem = {
+  id: number;
+  full_name: string;
+  username: string;
+  email: string;
+  phone: string | null;
+  college: string | null;
+  course_year: string | null;
+  seat_no: string;
+  is_email_verified: boolean;
+  is_phone_verified: boolean;
+};
+
+type StudentListResponse = {
+  status: string;
+  items: StudentItem[];
+  count: number;
+};
+
 type AnalyticsResponse = {
   status: string;
   data: {
@@ -74,6 +94,7 @@ type ReviewDraft = {
 export default function TeacherDashboardPage() {
   const [overview, setOverview] = useState<OverviewResponse["data"] | null>(null);
   const [items, setItems] = useState<AssignmentItem[]>([]);
+  const [students, setStudents] = useState<StudentItem[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsResponse["data"] | null>(null);
   const [drafts, setDrafts] = useState<Record<number, ReviewDraft>>({});
   const [savingId, setSavingId] = useState<number | null>(null);
@@ -83,12 +104,14 @@ export default function TeacherDashboardPage() {
     Promise.all([
       apiFetch<OverviewResponse>("/api/admin/overview"),
       apiFetch<AssignmentListResponse>("/api/admin/assignments"),
-      apiFetch<AnalyticsResponse>("/api/analytics/dashboard")
+      apiFetch<AnalyticsResponse>("/api/analytics/dashboard"),
+      apiFetch<StudentListResponse>("/api/admin/students")
     ])
-      .then(([overviewPayload, assignmentPayload, analyticsPayload]) => {
+      .then(([overviewPayload, assignmentPayload, analyticsPayload, studentPayload]) => {
         setOverview(overviewPayload.data);
         setItems(assignmentPayload.items);
         setAnalytics(analyticsPayload.data);
+        setStudents(studentPayload.items);
         setDrafts(
           Object.fromEntries(
             assignmentPayload.items.map((item) => [
@@ -176,7 +199,64 @@ export default function TeacherDashboardPage() {
             assignments={items} 
             predictions={analytics?.predictions ?? []} 
             clusters={analytics?.clusters ?? []} 
-          />
+        />
+      </div>
+
+        <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
+            <div>
+              <h3 className="text-lg font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
+                <GraduationCap className="h-5 w-5 text-indigo-500" />
+                <span>Assigned Students</span>
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">Students are filtered to the college assigned to your faculty account.</p>
+            </div>
+            <span className="rounded-full bg-indigo-50 border border-indigo-100 px-3 py-1 text-xs font-bold text-indigo-600">
+              {students.length} records
+            </span>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-slate-100">
+            <table className="min-w-full divide-y divide-slate-100 text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Student</th>
+                  <th className="px-4 py-3">Seat No</th>
+                  <th className="px-4 py-3">College</th>
+                  <th className="px-4 py-3">Contact</th>
+                  <th className="px-4 py-3">Verification</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {students.length === 0 ? (
+                  <tr>
+                    <td className="px-4 py-8 text-center text-slate-400 font-semibold" colSpan={5}>
+                      No students found for this college.
+                    </td>
+                  </tr>
+                ) : (
+                  students.map((student) => (
+                    <tr key={student.id} className="hover:bg-slate-50/50">
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-slate-800">{student.full_name}</div>
+                        <div className="text-xs text-slate-400">@{student.username}</div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">{student.seat_no}</td>
+                      <td className="px-4 py-3 text-slate-600">{student.college ?? "-"}</td>
+                      <td className="px-4 py-3 text-slate-600">{student.email}</td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-600">
+                          {student.is_email_verified ? "Email ✓" : "Email pending"}
+                          <span className="text-slate-300">•</span>
+                          {student.is_phone_verified ? "Phone ✓" : "Phone pending"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Header Controls for Pending List */}
@@ -384,7 +464,7 @@ function StatCard({
 }: Readonly<{ 
   label: string; 
   value: string; 
-  icon: React.ReactNode;
+  icon: ReactNode;
   colorClass: string;
 }>) {
   return (
@@ -406,8 +486,8 @@ function LabelValue({
   icon
 }: Readonly<{ 
   label: string; 
-  value: string;
-  icon?: React.ReactNode;
+  value: string; 
+  icon?: ReactNode;
 }>) {
   return (
     <div>

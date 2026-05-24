@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { 
   User, 
@@ -57,13 +58,18 @@ export function SignupForm() {
   const [loading, setLoading] = useState(false);
   const [emailVerified, setEmailVerified] = useState(false);
   const [phoneVerified, setPhoneVerified] = useState(false);
+  const [collegeOptions, setCollegeOptions] = useState<string[]>(["SDJ International College", "Navyug Science College", "VNSGU Department of ICT", "Sutex Bank College"]);
 
-  const colleges = useMemo(
-    () => ["SDJ International College", "Navyug Science College", "VNSGU Department of ICT", "Sutex Bank College"],
-    []
-  );
   const courses = useMemo(() => ["BCA", "BBA", "B.Com"], []);
   const semesters = useMemo(() => ["Sem 1", "Sem 2", "Sem 3", "Sem 4", "Sem 5", "Sem 6"], []);
+
+  useEffect(() => {
+    apiFetch<{ status: string; items: Array<{ id: number; name: string }> }>("/api/auth/colleges")
+      .then((payload) => {
+        setCollegeOptions(payload.items.map((item) => item.name));
+      })
+      .catch(() => undefined);
+  }, []);
 
   async function startRegistration() {
     setLoading(true);
@@ -177,7 +183,7 @@ export function SignupForm() {
           </div>
           
           <div className="grid gap-4 sm:grid-cols-3">
-            <SelectField label="College" value={college} onChange={setCollege} options={colleges} icon={<GraduationCap className="h-4 w-4" />} />
+            <SelectField label="College" value={college} onChange={setCollege} options={collegeOptions} icon={<GraduationCap className="h-4 w-4" />} />
             <SelectField label="Course" value={course} onChange={setCourse} options={courses} icon={<BookOpen className="h-4 w-4" />} />
             <SelectField label="Semester" value={sem} onChange={setSem} options={semesters} icon={<Sparkles className="h-4 w-4" />} />
           </div>
@@ -337,7 +343,7 @@ function Field({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  icon: React.ReactNode;
+  icon: ReactNode;
   placeholder?: string;
   type?: string;
 }>) {
@@ -374,7 +380,7 @@ function SelectField({
   value: string;
   onChange: (value: string) => void;
   options: string[];
-  icon: React.ReactNode;
+  icon: ReactNode;
 }>) {
   return (
     <div>

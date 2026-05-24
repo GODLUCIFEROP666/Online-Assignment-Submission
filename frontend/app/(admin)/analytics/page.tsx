@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { AdminAnalyticsGrid } from "@/components/charts/admin-analytics-grid";
 import { AppShell } from "@/components/shell";
@@ -142,7 +143,7 @@ function StatCard({
 }: Readonly<{ 
   label: string; 
   value: string; 
-  icon: React.ReactNode;
+  icon: ReactNode;
   colorClass: string;
 }>) {
   return (

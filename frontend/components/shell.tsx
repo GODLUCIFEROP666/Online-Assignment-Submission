@@ -20,6 +20,8 @@ import {
   UserCheck
 } from "lucide-react";
 import { clearAuth, getSessionRole } from "@/lib/auth";
+import { API_BASE_URL } from "@/lib/api";
+import { NotificationBell } from "@/components/notification-bell";
 
 type NavItem = {
   href: string;
@@ -46,7 +48,19 @@ export function AppShell({
     setRole(getSessionRole());
   }, []);
 
-  function handleLogout() {
+  async function handleLogout() {
+    const currentRole = getSessionRole() ?? role;
+    const logoutPath = currentRole === "teacher" || currentRole === "superadmin" ? "/api/admin/auth/logout" : "/api/auth/logout";
+    try {
+      const accessToken = window.localStorage.getItem("final2_access_token");
+      await fetch(`${API_BASE_URL}${logoutPath}`, {
+        method: "POST",
+        credentials: "include",
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined
+      });
+    } catch {
+      // Best-effort backend logout. Local auth is cleared regardless.
+    }
     clearAuth();
     router.push("/login");
   }
@@ -68,6 +82,12 @@ export function AppShell({
     : "Member";
 
   const isTeacherOrAdmin = role === "teacher" || role === "superadmin";
+  const visibleNav = nav.filter((item) => {
+    if (item.href.includes("superadmin")) {
+      return role === "superadmin";
+    }
+    return true;
+  });
 
   return (
     <div className="min-h-screen bg-slate-50/50 pb-12 font-sans selection:bg-indigo-500/10 selection:text-indigo-600">
@@ -95,6 +115,8 @@ export function AppShell({
               <Sparkles className="h-3 w-3 animate-pulse" />
               <span>{formattedRole} Mode</span>
             </div>
+            <div className="h-4 w-px bg-slate-200" />
+            <NotificationBell />
             <div className="h-4 w-px bg-slate-200" />
             <button
               onClick={handleLogout}
@@ -131,7 +153,7 @@ export function AppShell({
                 <div className="mt-1 text-sm font-semibold text-slate-700">{formattedRole} Menu</div>
               </div>
               <nav className="space-y-1.5">
-                {nav.map((item) => {
+                {visibleNav.map((item) => {
                   const isActive = pathname === item.href;
                   return (
                     <Link
@@ -183,7 +205,7 @@ export function AppShell({
             </div>
 
             <nav className="space-y-1">
-              {nav.map((item) => {
+              {visibleNav.map((item) => {
                 const isActive = pathname === item.href;
                 return (
                   <Link

@@ -1,6 +1,53 @@
 from datetime import datetime, timezone
 from app.core.security import hash_password
 from app.db.session import get_next_sequence_value
+from app.services.notification_service import create_notification
+
+
+async def ensure_demo_colleges(db) -> None:
+    colleges = [
+        "SDJ International College",
+        "Navyug Science College",
+        "VNSGU Department of ICT",
+        "Sutex Bank College",
+    ]
+    for name in colleges:
+        normalized = name.strip().lower()
+        existing = await db.colleges.find_one({"name_normalized": normalized})
+        if existing:
+            continue
+        college_id = await get_next_sequence_value(db, "colleges")
+        await db.colleges.insert_one(
+            {
+                "id": college_id,
+                "name": name,
+                "name_normalized": normalized,
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        )
+
+
+async def ensure_demo_notifications(db) -> None:
+    student = await db.users.find_one({"username": "jignesh"})
+    if student:
+        existing = await db.notifications.find_one(
+            {
+                "recipient_user_id": student["id"],
+                "category": "system",
+                "entity_type": "welcome",
+            }
+        )
+        if not existing:
+            await create_notification(
+                db,
+                recipient_user_id=student["id"],
+                title="Welcome to FINAL2 Portal",
+                body="Your student dashboard is ready. Submitted assignments and grading updates will appear here.",
+                category="system",
+                entity_type="welcome",
+                entity_id=student["id"],
+            )
 
 async def ensure_demo_student(db) -> dict:
     existing = await db.users.find_one({

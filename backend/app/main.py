@@ -3,7 +3,13 @@ from fastapi import FastAPI
 from app.core.cors import configure_cors
 from app.db.session import init_db, close_db, get_mongodb_db
 from app.routers import admin, analytics, assignments, auth, files, notifications, users
-from app.services.demo_service import ensure_demo_admin, ensure_demo_student, ensure_demo_superadmin
+from app.services.demo_service import (
+    ensure_demo_admin,
+    ensure_demo_colleges,
+    ensure_demo_notifications,
+    ensure_demo_student,
+    ensure_demo_superadmin,
+)
 
 app = FastAPI(title="FINAL2 API", version="0.1.0")
 configure_cors(app)
@@ -30,6 +36,8 @@ async def startup() -> None:
         await ensure_demo_student(db)
         await ensure_demo_admin(db)
         await ensure_demo_superadmin(db)
+        await ensure_demo_colleges(db)
+        await ensure_demo_notifications(db)
     except Exception as e:
         print(f"Error during seeding: {e}")
 

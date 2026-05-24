@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { AppShell } from "@/components/shell";
 import { studentNav } from "@/lib/constants";
 import { 
@@ -15,7 +16,7 @@ type RuleItem = {
   id: number;
   title: string;
   desc: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   colorClass: string;
 };
 

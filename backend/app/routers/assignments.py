@@ -1,6 +1,4 @@
 from datetime import date, datetime
-from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
@@ -8,7 +6,8 @@ from app.core.dependencies import get_current_claims
 from app.core.config import get_settings
 from app.db.session import get_mongodb_db, get_next_sequence_value
 from app.schemas.assignments import AssignmentReview
-from app.services.file_service import uploads_dir
+from app.services.file_service import gridfs_bucket, store_upload, uploads_dir
+from app.services.notification_service import create_notification
 
 router = APIRouter()
 
@@ -138,24 +137,25 @@ async def create_assignment(
 ) -> dict[str, object]:
     user = await _current_student(db, claims)
     saved_name = None
+    file_gridfs_id = None
+    file_content_type = None
+    file_original_name = None
     if upload and upload.filename:
-        suffix = Path(upload.filename).suffix.lower()
-        if suffix not in ALLOWED_UPLOAD_EXTENSIONS:
+        suffix = upload.filename and upload.filename.lower().rpartition(".")[2]
+        extension = f".{suffix}" if suffix else ""
+        if extension not in ALLOWED_UPLOAD_EXTENSIONS:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported upload file type")
         if upload.content_type and upload.content_type not in ALLOWED_UPLOAD_TYPES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported upload content type")
-        base_dir = uploads_dir()
-        safe_name = f"{uuid4().hex}_{Path(upload.filename).name}"
-        file_path = base_dir / safe_name
-        content = await upload.read()
         max_bytes = get_settings().max_upload_mb * 1024 * 1024
-        if len(content) > max_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Upload must be {get_settings().max_upload_mb} MB or smaller",
-            )
-        file_path.write_bytes(content)
-        saved_name = safe_name
+        try:
+            stored = await store_upload(db, upload, max_bytes=max_bytes)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        saved_name = stored["file_name"]
+        file_gridfs_id = stored["gridfs_id"]
+        file_content_type = stored["content_type"]
+        file_original_name = stored["original_name"]
 
     assignment_id = await get_next_sequence_value(db, "assignments")
     
@@ -173,6 +173,9 @@ async def create_assignment(
         "title": title,
         "details": details,
         "file_name": saved_name,
+        "file_gridfs_id": file_gridfs_id,
+        "file_content_type": file_content_type,
+        "file_original_name": file_original_name,
         "status": "Pending",
         "submit_date": submit_date,
         "submit_time": submit_time,
@@ -183,6 +186,16 @@ async def create_assignment(
     }
     
     await db.assignments.insert_one(assignment_doc)
+    await create_notification(
+        db,
+        recipient_role="teacher",
+        college=user.get("college"),
+        title="New assignment submitted",
+        body=f"{user.get('full_name')} submitted {subject} - {title}.",
+        category="assignment",
+        entity_type="assignment",
+        entity_id=assignment_id,
+    )
     return {"status": "success", "message": "Assignment submitted", "assignment": _assignment_payload(assignment_doc)}
 
 
@@ -200,6 +213,11 @@ async def delete_assignment(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own submission")
     
     if assignment.get("file_name"):
+        if assignment.get("file_gridfs_id") is not None:
+            try:
+                await gridfs_bucket(db).delete(assignment.get("file_gridfs_id"))
+            except Exception:
+                pass
         file_path = uploads_dir() / assignment.get("file_name")
         if file_path.exists():
             file_path.unlink()
@@ -240,5 +258,14 @@ async def review_assignment(
     )
     
     updated_assignment = await db.assignments.find_one({"id": assignment_id})
+    if updated_assignment and updated_assignment.get("user_id"):
+        await create_notification(
+            db,
+            recipient_user_id=updated_assignment.get("user_id"),
+            title="Assignment reviewed",
+            body=f"Your assignment {updated_assignment.get('title')} was marked {payload.status}.",
+            category="assignment",
+            entity_type="assignment",
+            entity_id=assignment_id,
+        )
     return {"status": "success", "message": "Assignment reviewed", "assignment": _assignment_payload(updated_assignment)}
-

@@ -1,11 +1,10 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.core.dependencies import get_current_claims
 from app.db.session import get_mongodb_db
-from app.services.file_service import uploads_dir
+from app.services.file_service import load_stored_file
 
 router = APIRouter()
 
@@ -15,9 +14,11 @@ async def get_file(
     file_id: str,
     claims: dict = Depends(get_current_claims),
     db = Depends(get_mongodb_db),
-) -> FileResponse:
-    upload_root = uploads_dir()
+) -> Response:
     file_name = file_id
+    gridfs_id = None
+    download_name = None
+    download_type = None
 
     if file_id.isdigit():
         assignment = await db.assignments.find_one({"id": int(file_id)})
@@ -29,10 +30,16 @@ async def get_file(
             file_name = assignment.get("file_name")
         else:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+        gridfs_id = assignment.get("file_gridfs_id")
+        download_name = assignment.get("file_original_name") or assignment.get("file_name")
+        download_type = assignment.get("file_content_type")
 
-    file_path = upload_root / Path(file_name).name
-    if not file_path.exists():
+    stored = await load_stored_file(db, file_name=file_name, gridfs_id=gridfs_id)
+    if not stored:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
-    return FileResponse(path=file_path, filename=file_path.name)
-
+    filename = download_name or stored.get("filename") or Path(file_name).name
+    media_type = download_type or stored.get("content_type") or "application/octet-stream"
+    content = stored.get("content") or b""
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=content, media_type=media_type, headers=headers)

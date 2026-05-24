@@ -1,4 +1,6 @@
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument
+
 from app.core.config import get_settings
 
 class MongoDBManager:
@@ -32,6 +34,11 @@ async def init_db() -> None:
     await db.admins.create_index("email", unique=True)
     await db.assignments.create_index("user_id")
     await db.assignments.create_index("status")
+    await db.colleges.create_index("name_normalized", unique=True)
+    await db.notifications.create_index("recipient_user_id")
+    await db.notifications.create_index("recipient_role")
+    await db.notifications.create_index("is_read")
+    await db.notifications.create_index("created_at")
     await db.pending_registrations.create_index("username")
 
 async def close_db() -> None:
@@ -50,6 +57,6 @@ async def get_next_sequence_value(db, sequence_name: str) -> int:
         {"_id": sequence_name},
         {"$inc": {"sequence_value": 1}},
         upsert=True,
-        return_document=True
+        return_document=ReturnDocument.AFTER,
     )
     return sequence_document["sequence_value"]

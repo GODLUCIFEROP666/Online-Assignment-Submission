@@ -24,7 +24,7 @@ async function refreshSession() {
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const shouldRefresh = path.startsWith("/api/me") || path.startsWith("/api/admin") || path.startsWith("/api/assignments") || path.startsWith("/api/files") || path.startsWith("/api/analytics");
+  const shouldRefresh = path.startsWith("/api/me") || path.startsWith("/api/admin") || path.startsWith("/api/assignments") || path.startsWith("/api/files") || path.startsWith("/api/analytics") || path.startsWith("/api/notifications");
 
   async function request() {
     const token = getAccessToken();

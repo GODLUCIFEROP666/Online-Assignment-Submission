@@ -19,6 +19,7 @@ from app.services.registration_service import (
     verify_pending_email,
     verify_pending_phone,
 )
+from app.services.notification_service import create_notification
 from app.services.otp_service import generate_otp
 
 router = APIRouter()
@@ -149,6 +150,15 @@ async def register_complete(payload: RegistrationCompleteRequest, db = Depends(g
     user = await complete_pending_registration(db, payload.registration_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration is not verified or could not be completed")
+    await create_notification(
+        db,
+        recipient_user_id=user["id"],
+        title="Registration completed",
+        body=f"Your student account {user['username']} is now active.",
+        category="account",
+        entity_type="user",
+        entity_id=user["id"],
+    )
     return {"status": "success", "user_id": user["id"], "username": user["username"]}
 
 
@@ -210,3 +220,17 @@ async def contact_available(email: str | None = None, phone: str | None = None, 
     if not exists and phone:
         exists = await db.users.find_one({"phone": phone})
     return {"status": "success", "available": exists is None, "email": email, "phone": phone}
+
+
+@router.get("/colleges", status_code=status.HTTP_200_OK)
+async def list_colleges(db = Depends(get_mongodb_db)) -> dict[str, object]:
+    cursor = db.colleges.find().sort("name", 1)
+    colleges = await cursor.to_list(length=None)
+    items = [
+        {
+            "id": college.get("id"),
+            "name": college.get("name"),
+        }
+        for college in colleges
+    ]
+    return {"status": "success", "items": items, "count": len(items)}
