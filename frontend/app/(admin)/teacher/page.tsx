@@ -1,11 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AdminAnalyticsGrid } from "@/components/charts/admin-analytics-grid";
 import { AppShell } from "@/components/shell";
 import { API_BASE_URL, apiFetch } from "@/lib/api";
 import { adminNav, assignmentStatuses } from "@/lib/constants";
+import { useLiveRefresh } from "@/hooks/use-live-refresh";
 import { 
   FileDown, 
   GraduationCap, 
@@ -100,33 +101,35 @@ export default function TeacherDashboardPage() {
   const [savingId, setSavingId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([
-      apiFetch<OverviewResponse>("/api/admin/overview"),
-      apiFetch<AssignmentListResponse>("/api/admin/assignments"),
-      apiFetch<AnalyticsResponse>("/api/analytics/dashboard"),
-      apiFetch<StudentListResponse>("/api/admin/students")
-    ])
-      .then(([overviewPayload, assignmentPayload, analyticsPayload, studentPayload]) => {
-        setOverview(overviewPayload.data);
-        setItems(assignmentPayload.items);
-        setAnalytics(analyticsPayload.data);
-        setStudents(studentPayload.items);
-        setDrafts(
-          Object.fromEntries(
-            assignmentPayload.items.map((item) => [
-              item.id,
-              {
-                status: item.status ?? "Pending",
-                marks: String(item.marks ?? 0),
-                teacher_note: item.teacher_note ?? ""
-              }
-            ])
-          )
-        );
-      })
-      .catch((error) => setMessage(error instanceof Error ? error.message : "Failed to load teacher dashboard"));
-  }, []);
+  useLiveRefresh(async () => {
+    try {
+      const [overviewPayload, assignmentPayload, analyticsPayload, studentPayload] = await Promise.all([
+        apiFetch<OverviewResponse>("/api/admin/overview"),
+        apiFetch<AssignmentListResponse>("/api/admin/assignments"),
+        apiFetch<AnalyticsResponse>("/api/analytics/dashboard"),
+        apiFetch<StudentListResponse>("/api/admin/students")
+      ]);
+
+      setOverview(overviewPayload.data);
+      setItems(assignmentPayload.items);
+      setAnalytics(analyticsPayload.data);
+      setStudents(studentPayload.items);
+      setDrafts(
+        Object.fromEntries(
+          assignmentPayload.items.map((item) => [
+            item.id,
+            {
+              status: item.status ?? "Pending",
+              marks: String(item.marks ?? 0),
+              teacher_note: item.teacher_note ?? ""
+            }
+          ])
+        )
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to load teacher dashboard");
+    }
+  });
 
   async function saveReview(item: AssignmentItem) {
     const draft = drafts[item.id];

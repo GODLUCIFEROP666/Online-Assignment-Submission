@@ -1,11 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AdminAnalyticsGrid } from "@/components/charts/admin-analytics-grid";
 import { AppShell } from "@/components/shell";
 import { apiFetch } from "@/lib/api";
 import { adminNav } from "@/lib/constants";
+import { useLiveRefresh } from "@/hooks/use-live-refresh";
 import { 
   FileSpreadsheet, 
   Users, 
@@ -50,17 +51,19 @@ export default function AnalyticsPage() {
   const [assignments, setAssignments] = useState<AssignmentItem[]>([]);
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([
-      apiFetch<AnalyticsResponse>("/api/analytics/dashboard"), 
-      apiFetch<AssignmentListResponse>("/api/admin/assignments")
-    ])
-      .then(([analyticsPayload, assignmentPayload]) => {
-        setData(analyticsPayload.data);
-        setAssignments(assignmentPayload.items);
-      })
-      .catch((error) => setMessage(error instanceof Error ? error.message : "Failed to load analytics"));
-  }, []);
+  useLiveRefresh(async () => {
+    try {
+      const [analyticsPayload, assignmentPayload] = await Promise.all([
+        apiFetch<AnalyticsResponse>("/api/analytics/dashboard"),
+        apiFetch<AssignmentListResponse>("/api/admin/assignments")
+      ]);
+
+      setData(analyticsPayload.data);
+      setAssignments(assignmentPayload.items);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to load analytics");
+    }
+  });
 
   return (
     <AppShell 

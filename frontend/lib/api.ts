@@ -31,6 +31,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
     return fetch(`${API_BASE_URL}${path}`, {
       ...init,
+      cache: "no-store",
       headers: {
         ...(isFormData ? {} : { "Content-Type": "application/json" }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),

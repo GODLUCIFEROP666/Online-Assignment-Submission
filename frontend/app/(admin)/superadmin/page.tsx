@@ -1,11 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AdminAnalyticsGrid } from "@/components/charts/admin-analytics-grid";
 import { AppShell } from "@/components/shell";
 import { API_BASE_URL, apiFetch } from "@/lib/api";
 import { adminNav, assignmentStatuses } from "@/lib/constants";
+import { useLiveRefresh } from "@/hooks/use-live-refresh";
 import {
   AlertCircle,
   BookOpen,
@@ -189,9 +190,7 @@ export default function SuperAdminPage() {
     );
   }
 
-  useEffect(() => {
-    loadDashboard().catch((error) => setMessage(error instanceof Error ? error.message : "Failed to load superadmin dashboard"));
-  }, []);
+  useLiveRefresh(() => loadDashboard().catch((error) => setMessage(error instanceof Error ? error.message : "Failed to load superadmin dashboard")));
 
   function beginTeacherEdit(teacher: TeacherItem) {
     setEditingTeacherId(teacher.id);
