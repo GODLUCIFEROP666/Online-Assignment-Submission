@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 from pydantic import BaseModel, Field
 
 class User(BaseModel):
@@ -31,6 +32,9 @@ class Assignment(BaseModel):
     title: str | None = None
     details: str | None = None
     file_name: str | None = None
+    file_gridfs_id: Any | None = None
+    file_content_type: str | None = None
+    file_original_name: str | None = None
     status: str = "Pending"
     submit_date: datetime | None = None
     submit_time: datetime | None = None
@@ -68,3 +72,18 @@ class PendingRegistration(BaseModel):
     phone_verified: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: datetime | None = None
+
+
+class Notification(BaseModel):
+    id: int
+    recipient_user_id: int | None = None
+    recipient_role: str | None = None
+    college: str | None = None
+    title: str
+    body: str
+    category: str = "system"
+    entity_type: str | None = None
+    entity_id: int | None = None
+    is_read: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    read_at: datetime | None = None

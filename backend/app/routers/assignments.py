@@ -62,6 +62,8 @@ def _assignment_payload(assignment: dict) -> dict[str, object]:
         "title": assignment.get("title"),
         "details": assignment.get("details"),
         "file_name": assignment.get("file_name"),
+        "file_original_name": assignment.get("file_original_name"),
+        "file_content_type": assignment.get("file_content_type"),
         "status": assignment.get("status"),
         "submit_date": submit_date_str,
         "submit_time": submit_time_str,

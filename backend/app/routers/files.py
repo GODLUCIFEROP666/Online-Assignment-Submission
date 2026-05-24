@@ -36,9 +36,9 @@ async def get_file(
 
     stored = await load_stored_file(db, file_name=file_name, gridfs_id=gridfs_id)
     if not stored:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Uploaded file is missing from GridFS and local storage")
 
-    filename = download_name or stored.get("filename") or Path(file_name).name
+    filename = Path(download_name or stored.get("filename") or file_name).name
     media_type = download_type or stored.get("content_type") or "application/octet-stream"
     content = stored.get("content") or b""
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}

@@ -375,6 +375,8 @@ async def assignments(claims: dict = Depends(get_current_claims), db = Depends(g
             "subject": assignment.get("subject"),
             "title": assignment.get("title"),
             "file_name": assignment.get("file_name"),
+            "file_original_name": assignment.get("file_original_name"),
+            "file_content_type": assignment.get("file_content_type"),
             "status": assignment.get("status"),
             "marks": float(assignment.get("marks") or 0.0),
             "teacher_note": assignment.get("teacher_note"),

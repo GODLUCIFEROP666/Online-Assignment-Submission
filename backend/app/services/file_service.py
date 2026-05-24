@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 from pathlib import Path
+from uuid import uuid4
 
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
@@ -23,7 +24,11 @@ def guess_media_type(filename: str) -> str:
     if suffix == ".pdf":
         return "application/pdf"
     if suffix in {".doc", ".docx"}:
-        return "application/msword"
+        return (
+            "application/msword"
+            if suffix == ".doc"
+            else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
     if suffix in {".jpg", ".jpeg"}:
         return "image/jpeg"
     if suffix == ".png":
@@ -42,7 +47,7 @@ async def store_upload(db, upload, *, max_bytes: int) -> dict[str, Any]:
         raise ValueError(f"Upload must be {max_bytes // (1024 * 1024)} MB or smaller")
 
     stem = Path(upload.filename).stem[:40].replace(" ", "_") or "upload"
-    file_name = f"{stem}_{Path(upload.filename).name}"
+    file_name = f"{uuid4().hex}_{stem}_{Path(upload.filename).name}"
     file_path = uploads_dir() / file_name
 
     try:
