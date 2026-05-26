@@ -5,25 +5,26 @@ import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell";
 import { apiFetch } from "@/lib/api";
 import { studentNav } from "@/lib/constants";
-import { 
-  User, 
-  Mail, 
-  Smartphone, 
-  Lock, 
-  Sparkles, 
-  GraduationCap, 
-  ShieldCheck, 
-  CheckCircle2, 
+import {
   AlertCircle,
-  FileSpreadsheet,
+  CalendarDays,
+  CheckCircle2,
+  GraduationCap,
+  Lock,
+  Mail,
   Settings,
-  ShieldAlert
+  ShieldAlert,
+  ShieldCheck,
+  Smartphone,
+  Sparkles,
+  User
 } from "lucide-react";
 
 type MeResponse = {
   status: string;
   role: string;
   data: {
+    id: number;
     full_name: string;
     username: string;
     email: string;
@@ -33,49 +34,77 @@ type MeResponse = {
     seat_no: string;
     is_email_verified: boolean;
     is_phone_verified: boolean;
+    created_at?: string | null;
   };
 };
+
+type SubmitResponse = {
+  status: string;
+  message: string;
+};
+
+function splitCourseYear(courseYear: string | null) {
+  const [course = "", sem = ""] = (courseYear ?? "").split(" - ");
+  return { course, sem };
+}
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<MeResponse["data"] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [newPassword, setNewPassword] = useState("");
-  const [newEmail, setNewEmail] = useState("");
-  const [newPhone, setNewPhone] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [seatNo, setSeatNo] = useState("");
+  const [college, setCollege] = useState("");
   const [course, setCourse] = useState("");
   const [sem, setSem] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
     apiFetch<MeResponse>("/api/me")
       .then((payload) => {
         setProfile(payload.data);
+        setFullName(payload.data.full_name);
+        setSeatNo(payload.data.seat_no);
+        setCollege(payload.data.college ?? "");
+        const split = splitCourseYear(payload.data.course_year);
+        setCourse(split.course);
+        setSem(split.sem);
         setNewEmail(payload.data.email);
         setNewPhone(payload.data.phone ?? "");
-        const [courseValue = "", semValue = ""] = (payload.data.course_year ?? "").split(" - ");
-        setCourse(courseValue);
-        setSem(semValue);
       })
       .catch((error) => setMessage(error instanceof Error ? error.message : "Failed to load profile"));
   }, []);
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!profile) return;
     setLoading(true);
     setMessage(null);
     try {
-      await apiFetch("/api/me", {
+      await apiFetch<SubmitResponse>("/api/me", {
         method: "PUT",
         body: JSON.stringify({
-          full_name: profile.full_name,
-          seat_no: profile.seat_no,
-          college: profile.college ?? "",
+          full_name: fullName,
+          seat_no: seatNo,
+          college,
           course,
           sem
         })
       });
-      setProfile({ ...profile, course_year: `${course} - ${sem}` });
+
+      setProfile((current) =>
+        current
+          ? {
+              ...current,
+              full_name: fullName,
+              seat_no: seatNo,
+              college,
+              course_year: `${course} - ${sem}`
+            }
+          : current
+      );
       setMessage("Profile updated successfully.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Profile update failed");
@@ -84,17 +113,58 @@ export default function ProfilePage() {
     }
   }
 
-  async function changePassword(event: FormEvent<HTMLFormElement>) {
+  async function saveEmail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setMessage(null);
     try {
-      await apiFetch("/api/me/password", {
+      await apiFetch<SubmitResponse>("/api/me/email", {
+        method: "PUT",
+        body: JSON.stringify({ email: newEmail })
+      });
+      setProfile((current) => (current ? { ...current, email: newEmail, is_email_verified: false } : current));
+      setMessage("Email updated successfully.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Email update failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function savePhone(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setMessage(null);
+    try {
+      await apiFetch<SubmitResponse>("/api/me/phone", {
+        method: "PUT",
+        body: JSON.stringify({ phone: newPhone })
+      });
+      setProfile((current) => (current ? { ...current, phone: newPhone, is_phone_verified: false } : current));
+      setMessage("Mobile number updated successfully.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Phone update failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function savePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (newPassword !== confirmPassword) {
+      setMessage("Passwords do not match.");
+      return;
+    }
+    setLoading(true);
+    setMessage(null);
+    try {
+      await apiFetch<SubmitResponse>("/api/me/password", {
         method: "PUT",
         body: JSON.stringify({ new_password: newPassword })
       });
       setNewPassword("");
-      setMessage("Password updated successfully.");
+      setConfirmPassword("");
+      setMessage("Password changed successfully.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Password update failed");
     } finally {
@@ -102,22 +172,23 @@ export default function ProfilePage() {
     }
   }
 
+  const avatarLetter = (profile?.full_name || profile?.username || "U").slice(0, 1).toUpperCase();
+  const joinedValue = profile?.created_at ? new Date(profile.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "Not available";
+
   return (
-    <AppShell 
-      title="My Profile" 
-      subtitle="Verify your credentials, manage contact records, update semesters, and change secure passwords." 
+    <AppShell
+      title="My Profile"
+      subtitle="Manage your account settings and preferences."
       nav={studentNav}
     >
       <div className="space-y-6">
-        
-        {/* Profile Center Header */}
         <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-100">
           <div>
             <h3 className="text-xl font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
               <Settings className="h-5 w-5 text-indigo-500" />
-              <span>Student Profile Settings</span>
+              <span>My Profile</span>
             </h3>
-            <p className="mt-1 text-sm text-slate-500">Configure your account details, verification OTP logs, and security passkeys.</p>
+            <p className="mt-1 text-sm text-slate-500">Manage your account settings and preferences.</p>
           </div>
           <div className="rounded-full bg-indigo-50 border border-indigo-100 px-3.5 py-1 text-xs font-bold text-indigo-600 flex items-center gap-1">
             <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
@@ -125,227 +196,131 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* Form & Info Layout columns */}
-        <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
-          
-          {/* Left Column: Visual User card */}
-          <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm flex flex-col justify-between">
-            <div className="text-center pt-4">
-              {/* Glowing Avatar */}
-              <div className="mx-auto mb-5 flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-500 to-indigo-600 text-4xl font-black text-white shadow-xl shadow-indigo-600/30 ring-4 ring-indigo-50">
-                {(profile?.full_name ?? "U").slice(0, 1).toUpperCase()}
-              </div>
-              <h4 className="text-xl font-extrabold text-slate-800 tracking-tight">
-                {profile?.full_name ?? "Student Portal"}
-              </h4>
-              <p className="mt-1 text-xs font-semibold text-slate-400">
-                @{profile?.username ?? "username"}
-              </p>
-              
-              <span className="mt-4 inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-100 px-3.5 py-1 text-xs font-bold text-indigo-600">
-                <GraduationCap className="h-3.5 w-3.5" />
-                <span>{profile?.course_year || "Syllabus Unassigned"}</span>
-              </span>
+        <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
+          <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm text-center">
+            <div className="mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-500 to-indigo-600 text-4xl font-black text-white shadow-xl shadow-indigo-600/30 ring-4 ring-indigo-50">
+              {avatarLetter}
             </div>
+            <h4 className="text-xl font-extrabold text-slate-800 tracking-tight">{profile?.full_name ?? "Student Portal"}</h4>
+            <p className="mt-1 text-xs font-semibold text-slate-400">@{profile?.username ?? "username"}</p>
+            <span className="mt-4 inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-100 px-3.5 py-1 text-xs font-bold text-indigo-600">
+              <GraduationCap className="h-3.5 w-3.5" />
+              <span>{profile?.course_year || "Syllabus Unassigned"}</span>
+            </span>
 
-            {/* Structured DL Metadata grid */}
-            <dl className="mt-8 space-y-3.5 rounded-2xl bg-slate-50/50 border border-slate-100 p-5 text-xs font-semibold">
-              <Row 
-                label="Primary Email Address" 
-                value={profile?.email ?? "Loading..."} 
-                verified={profile?.is_email_verified} 
-              />
-              <Row 
-                label="Registered Mobile" 
-                value={profile?.phone ?? "Not configured"} 
-                verified={profile?.is_phone_verified} 
-              />
-              <Row 
-                label="Assigned College" 
-                value={profile?.college ?? "Not configured"} 
-              />
-              <Row 
-                label="Academic Seat Number" 
-                value={profile?.seat_no ?? "Not configured"} 
-              />
+            <dl className="mt-8 space-y-3.5 rounded-2xl bg-slate-50/50 border border-slate-100 p-5 text-xs font-semibold text-left">
+              <Row label="Primary Email Address" value={profile?.email ?? "Loading..."} verified={profile?.is_email_verified} />
+              <Row label="Registered Mobile" value={profile?.phone ?? "Not configured"} verified={profile?.is_phone_verified} />
+              <Row label="Assigned College" value={profile?.college ?? "Not configured"} />
+              <Row label="Academic Seat Number" value={profile?.seat_no ?? "Not configured"} />
+              <Row label="Joined" value={joinedValue} />
             </dl>
           </section>
 
-          {/* Right Column: Update Forms stack */}
           <section className="space-y-6">
-            
-            {/* Form 1: General profile fields */}
             <form className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-4" onSubmit={saveProfile}>
               <h5 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-50 pb-3">
                 <User className="h-4.5 w-4.5 text-indigo-500" />
-                <span>General Profile Records</span>
+                <span>Personal Details</span>
               </h5>
-              
+
               <div className="grid gap-4 sm:grid-cols-2">
-                <EditField 
-                  label="Full Name" 
-                  value={profile?.full_name ?? ""} 
-                  onChange={(val) => profile && setProfile({ ...profile, full_name: val })} 
-                  placeholder="John Doe" 
-                />
-                <EditField 
-                  label="Seat Number" 
-                  value={profile?.seat_no ?? ""} 
-                  onChange={(val) => profile && setProfile({ ...profile, seat_no: val })} 
-                  placeholder="Seat No" 
-                />
-                <EditField 
-                  label="Active College" 
-                  value={profile?.college ?? ""} 
-                  onChange={(val) => profile && setProfile({ ...profile, college: val })} 
-                  placeholder="College" 
-                />
+                <EditField label="Full Name" value={fullName} onChange={setFullName} placeholder="John Doe" />
+                <EditField label="Seat Number / Roll No" value={seatNo} onChange={setSeatNo} placeholder="Seat No" />
+                <EditField label="College Name" value={college} onChange={setCollege} placeholder="College" />
                 <div className="grid gap-3 grid-cols-2">
-                  <EditField 
-                    label="Course" 
-                    value={course} 
-                    onChange={setCourse} 
-                    placeholder="Course" 
-                  />
-                  <EditField 
-                    label="Semester" 
-                    value={sem} 
-                    onChange={setSem} 
-                    placeholder="Sem" 
-                  />
+                  <EditField label="Course" value={course} onChange={setCourse} placeholder="Course" />
+                  <EditField label="Semester" value={sem} onChange={setSem} placeholder="Sem" />
                 </div>
               </div>
 
-              <button className="rounded-2xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition duration-200">
-                Save Records
+              <button
+                disabled={loading}
+                className="rounded-2xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition duration-200 disabled:opacity-60"
+              >
+                Save Changes
               </button>
             </form>
 
-            {/* Form 2: Email update */}
-            <form
-              className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-4"
-              onSubmit={async (event) => {
-                event.preventDefault();
-                setLoading(true);
-                setMessage(null);
-                if (!profile) return;
-                try {
-                  await apiFetch("/api/me/email", {
-                    method: "PUT",
-                    body: JSON.stringify({ email: newEmail })
-                  });
-                  setProfile((current) => (current ? { ...current, email: newEmail, is_email_verified: false } : current));
-                  setMessage("Email updated successfully. Please re-verify.");
-                } catch (error) {
-                  setMessage(error instanceof Error ? error.message : "Email update failed");
-                } finally {
-                  setLoading(false);
-                }
-              }}
-            >
+            <form className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-4" onSubmit={saveEmail}>
               <h5 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-50 pb-3">
                 <Mail className="h-4.5 w-4.5 text-indigo-500" />
-                <span>Contact Email Address</span>
+                <span>Change Email Address</span>
               </h5>
-              
-              <EditField 
-                label="Registered Email" 
-                value={newEmail} 
-                onChange={setNewEmail} 
-                type="email" 
-              />
-              
-              <button className="rounded-2xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition duration-200">
+
+              <EditField label="Current Email" value={profile?.email ?? ""} onChange={() => undefined} readOnly />
+              <EditField label="New Email Address" value={newEmail} onChange={setNewEmail} type="email" placeholder="Enter new email address" />
+
+              <button
+                disabled={loading}
+                className="rounded-2xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition duration-200 disabled:opacity-60"
+              >
                 Update Email
               </button>
             </form>
 
-            {/* Form 3: Phone update */}
-            <form
-              className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-4"
-              onSubmit={async (event) => {
-                event.preventDefault();
-                setLoading(true);
-                setMessage(null);
-                if (!profile) return;
-                try {
-                  await apiFetch("/api/me/phone", {
-                    method: "PUT",
-                    body: JSON.stringify({ phone: newPhone })
-                  });
-                  setProfile((current) => (current ? { ...current, phone: newPhone, is_phone_verified: false } : current));
-                  setMessage("Phone number updated successfully. Please re-verify.");
-                } catch (error) {
-                  setMessage(error instanceof Error ? error.message : "Phone update failed");
-                } finally {
-                  setLoading(false);
-                }
-              }}
-            >
+            <form className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-4" onSubmit={savePhone}>
               <h5 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-50 pb-3">
                 <Smartphone className="h-4.5 w-4.5 text-indigo-500" />
-                <span>Contact Mobile Number</span>
+                <span>Change Mobile Number</span>
               </h5>
-              
-              <EditField 
-                label="Registered Mobile" 
-                value={newPhone} 
-                onChange={setNewPhone} 
-                type="tel" 
-              />
-              
-              <button className="rounded-2xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition duration-200">
+
+              <EditField label="Current Mobile" value={profile?.phone ?? ""} onChange={() => undefined} readOnly />
+              <EditField label="New Mobile Number" value={newPhone} onChange={setNewPhone} type="tel" placeholder="Enter 10-digit mobile number" />
+
+              <button
+                disabled={loading}
+                className="rounded-2xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition duration-200 disabled:opacity-60"
+              >
                 Update Mobile
               </button>
             </form>
 
-            {/* Form 4: Security Password Change */}
-            <form className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-4" onSubmit={changePassword}>
+            <form className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-4" onSubmit={savePassword}>
               <h5 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-50 pb-3">
                 <Lock className="h-4.5 w-4.5 text-indigo-500" />
-                <span>Change secure Passkey</span>
+                <span>Change Password</span>
               </h5>
-              
-              <EditField 
-                label="New Secure Password" 
-                value={newPassword} 
-                onChange={setNewPassword} 
-                type="password" 
-                placeholder="••••••••"
-              />
-              
-              <button className="rounded-2xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition duration-200">
-                Update Password
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <EditField label="New Password" value={newPassword} onChange={setNewPassword} type="password" placeholder="Min 8 characters" />
+                <EditField label="Confirm New Password" value={confirmPassword} onChange={setConfirmPassword} type="password" placeholder="Confirm password" />
+              </div>
+
+              <button
+                disabled={loading}
+                className="rounded-2xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition duration-200 disabled:opacity-60"
+              >
+                Change Password
               </button>
             </form>
 
-            {/* Dynamic response alert panel */}
             {message ? (
-              <div className={`flex items-start gap-2.5 rounded-2xl border p-4 text-xs font-semibold leading-relaxed ${
-                message.toLowerCase().includes("successfully") 
-                  ? "border-emerald-100 bg-emerald-50 text-emerald-700 shadow-sm"
-                  : "border-indigo-100 bg-indigo-50 text-indigo-700 shadow-sm"
-              }`}>
+              <div
+                className={`flex items-start gap-2.5 rounded-2xl border p-4 text-xs font-semibold leading-relaxed ${
+                  message.toLowerCase().includes("success")
+                    ? "border-emerald-100 bg-emerald-50 text-emerald-700 shadow-sm"
+                    : "border-rose-100 bg-rose-50 text-rose-700 shadow-sm"
+                }`}
+              >
                 <AlertCircle className="h-4.5 w-4.5 shrink-0 mt-0.5" />
                 <span>{message}</span>
               </div>
             ) : null}
-
           </section>
-
         </div>
       </div>
     </AppShell>
   );
 }
 
-function Row({ 
-  label, 
-  value, 
-  verified 
-}: Readonly<{ 
-  label: string; 
-  value: string; 
+function Row({
+  label,
+  value,
+  verified
+}: Readonly<{
+  label: string;
+  value: string;
   verified?: boolean;
 }>) {
   return (
@@ -353,13 +328,16 @@ function Row({
       <dt className="text-slate-400 font-medium">{label}</dt>
       <dd className="text-right flex items-center gap-1.5 text-slate-800">
         <span>{value}</span>
-        {verified !== undefined && (
-          verified ? (
-            <span className="text-emerald-500 flex h-4 w-4 items-center justify-center bg-emerald-50 rounded-full border border-emerald-100"><ShieldCheck className="h-2.5 w-2.5" /></span>
+        {verified !== undefined &&
+          (verified ? (
+            <span className="text-emerald-500 flex h-4 w-4 items-center justify-center bg-emerald-50 rounded-full border border-emerald-100">
+              <ShieldCheck className="h-2.5 w-2.5" />
+            </span>
           ) : (
-            <span className="text-amber-500 flex h-4 w-4 items-center justify-center bg-amber-50 rounded-full border border-amber-100"><ShieldAlert className="h-2.5 w-2.5" /></span>
-          )
-        )}
+            <span className="text-amber-500 flex h-4 w-4 items-center justify-center bg-amber-50 rounded-full border border-amber-100">
+              <ShieldAlert className="h-2.5 w-2.5" />
+            </span>
+          ))}
       </dd>
     </div>
   );
@@ -370,13 +348,15 @@ function EditField({
   value,
   onChange,
   placeholder = "",
-  type = "text"
+  type = "text",
+  readOnly = false
 }: Readonly<{
   label: string;
   value: string;
   onChange: (val: string) => void;
   placeholder?: string;
   type?: string;
+  readOnly?: boolean;
 }>) {
   return (
     <div>
@@ -388,7 +368,8 @@ function EditField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs font-semibold text-slate-800 transition focus:bg-white placeholder:text-slate-300 outline-none"
+        readOnly={readOnly}
+        className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs font-semibold text-slate-800 transition focus:bg-white placeholder:text-slate-300 outline-none read-only:bg-slate-50 read-only:cursor-not-allowed"
       />
     </div>
   );

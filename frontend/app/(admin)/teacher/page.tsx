@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { AdminAnalyticsGrid } from "@/components/charts/admin-analytics-grid";
 import { AppShell } from "@/components/shell";
-import { API_BASE_URL, apiFetch } from "@/lib/api";
+import { apiFetch, downloadApiFile } from "@/lib/api";
 import { adminNav, assignmentStatuses } from "@/lib/constants";
 import { useLiveRefresh } from "@/hooks/use-live-refresh";
 import { 
@@ -13,11 +13,12 @@ import {
   Sparkles, 
   Clock, 
   CheckCircle2, 
-  FileSpreadsheet, 
-  BookOpen, 
-  Award, 
-  UserCheck, 
-  Loader2, 
+  FileSpreadsheet,
+  BookOpen,
+  Award,
+  UserCheck,
+  Users,
+  Loader2,
   AlertCircle,
   FileText,
   Bookmark
@@ -30,6 +31,8 @@ type OverviewResponse = {
     teachers: number;
     assignments: number;
     pending: number;
+    checked: number;
+    rejected: number;
   };
 };
 
@@ -42,6 +45,7 @@ type AssignmentItem = {
   status: string | null;
   marks: number;
   file_name: string | null;
+  file_original_name: string | null;
   teacher_note: string | null;
   graded_by: string | null;
   graded_at: string | null;
@@ -119,7 +123,7 @@ export default function TeacherDashboardPage() {
           assignmentPayload.items.map((item) => [
             item.id,
             {
-              status: item.status ?? "Pending",
+              status: item.status === "Pending" || !item.status ? "Checked" : item.status,
               marks: String(item.marks ?? 0),
               teacher_note: item.teacher_note ?? ""
             }
@@ -137,10 +141,11 @@ export default function TeacherDashboardPage() {
     setSavingId(item.id);
     setMessage(null);
     try {
+      const status = draft.status === "Pending" ? "Checked" : draft.status;
       const payload = await apiFetch<{ status: string; message: string; assignment: AssignmentItem }>(`/api/assignments/${item.id}/review`, {
         method: "PATCH",
         body: JSON.stringify({
-          status: draft.status,
+          status,
           marks: Number(draft.marks) || 0,
           teacher_note: draft.teacher_note.trim() || null
         })
@@ -149,7 +154,7 @@ export default function TeacherDashboardPage() {
       setDrafts((current) => ({
         ...current,
         [item.id]: {
-          status: payload.assignment.status ?? "Pending",
+          status: payload.assignment.status ?? "Checked",
           marks: String(payload.assignment.marks ?? 0),
           teacher_note: payload.assignment.teacher_note ?? ""
         }
@@ -162,6 +167,10 @@ export default function TeacherDashboardPage() {
     }
   }
 
+  async function downloadAssignment(item: AssignmentItem) {
+    await downloadApiFile(`/api/files/${item.id}`, item.file_original_name || item.file_name || `assignment-${item.id}`);
+  }
+
   return (
     <AppShell 
       title="Teacher Dashboard" 
@@ -171,7 +180,19 @@ export default function TeacherDashboardPage() {
       <div className="space-y-6">
         
         {/* Statistics Panels Grid */}
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <StatCard 
+            label="Total Students" 
+            value={String(overview?.students ?? "-")} 
+            icon={<Users className="h-5 w-5 text-indigo-500" />}
+            colorClass="border-t-4 border-t-indigo-500"
+          />
+          <StatCard 
+            label="Total Assignments" 
+            value={String(overview?.assignments ?? "-")} 
+            icon={<FileSpreadsheet className="h-5 w-5 text-indigo-500" />}
+            colorClass="border-t-4 border-t-indigo-500"
+          />
           <StatCard 
             label="Pending Review" 
             value={String(overview?.pending ?? "-")} 
@@ -179,16 +200,16 @@ export default function TeacherDashboardPage() {
             colorClass="border-t-4 border-t-amber-500"
           />
           <StatCard 
-            label="Graded Checked" 
-            value={String(items.filter((item) => item.status === "Checked").length)} 
+            label="Checked" 
+            value={String(overview?.checked ?? "-")} 
             icon={<CheckCircle2 className="h-5 w-5 text-emerald-500" />}
             colorClass="border-t-4 border-t-emerald-500"
           />
           <StatCard 
-            label="Total Assignments" 
-            value={String(overview?.assignments ?? "-")} 
-            icon={<FileSpreadsheet className="h-5 w-5 text-indigo-500" />}
-            colorClass="border-t-4 border-t-indigo-500"
+            label="Rejected" 
+            value={String(overview?.rejected ?? "-")} 
+            icon={<AlertCircle className="h-5 w-5 text-rose-500" />}
+            colorClass="border-t-4 border-t-rose-500"
           />
         </div>
 
@@ -212,7 +233,7 @@ export default function TeacherDashboardPage() {
                 <GraduationCap className="h-5 w-5 text-indigo-500" />
                 <span>Assigned Students</span>
               </h3>
-              <p className="mt-1 text-sm text-slate-500">Students are filtered to the college assigned to your faculty account.</p>
+              <p className="mt-1 text-sm text-slate-500">Students are filtered to your assigned college and course scope.</p>
             </div>
             <span className="rounded-full bg-indigo-50 border border-indigo-100 px-3 py-1 text-xs font-bold text-indigo-600">
               {students.length} records
@@ -287,7 +308,7 @@ export default function TeacherDashboardPage() {
           ) : (
             items.map((item) => {
               const draft = drafts[item.id] ?? {
-                status: item.status ?? "Pending",
+                status: item.status === "Pending" || !item.status ? "Checked" : item.status,
                 marks: String(item.marks ?? 0),
                 teacher_note: item.teacher_note ?? ""
               };
@@ -323,15 +344,14 @@ export default function TeacherDashboardPage() {
                       </span>
                       
                       {item.file_name ? (
-                        <a
-                          href={`${API_BASE_URL}/api/files/${item.id}`}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => downloadAssignment(item).catch((error) => setMessage(error instanceof Error ? error.message : "Download failed"))}
                           className="flex items-center gap-1 rounded-full bg-slate-950 px-3.5 py-1 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition"
                         >
                           <FileDown className="h-3.5 w-3.5" />
                           <span>Retrieve File</span>
-                        </a>
+                        </button>
                       ) : null}
                     </div>
                   </div>

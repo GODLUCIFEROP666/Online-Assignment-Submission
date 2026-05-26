@@ -1,9 +1,10 @@
+import re
 from io import StringIO
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from app.core.dependencies import get_current_claims
+from app.core.dependencies import get_current_claims, find_admin_by_id_or_objectid
 from app.core.security import auth_cookie_kwargs, hash_password
 from app.db.session import get_mongodb_db, get_next_sequence_value
 from app.schemas.admin import (
@@ -34,6 +35,12 @@ def _require_superadmin(claims: dict) -> dict:
 
 def _college_key(name: str) -> str:
     return name.strip().lower()
+
+
+def _teacher_scope(claims: dict) -> tuple[str | None, str | None]:
+    college = claims.get("college")
+    course = claims.get("course")
+    return college, course
 
 
 @router.post("/auth/login", status_code=status.HTTP_200_OK)
@@ -67,15 +74,32 @@ async def logout(response: Response) -> dict[str, str]:
 @router.get("/overview", status_code=status.HTTP_200_OK)
 async def overview(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
     admin_claims = _require_admin(claims)
-    query: dict[str, object] = {}
-    if admin_claims.get("role") == "teacher":
-        query["college_name"] = admin_claims.get("college")
+    role = admin_claims.get("role")
+    college, course = _teacher_scope(admin_claims)
 
-    user_count = await db.users.count_documents({"college": admin_claims.get("college")} if admin_claims.get("role") == "teacher" else {})
-    teacher_count = await db.admins.count_documents({"role": "teacher"} if admin_claims.get("role") == "superadmin" else {"role": "teacher", "college": admin_claims.get("college")})
-    assignment_count = await db.assignments.count_documents(query)
-    pending_count = await db.assignments.count_documents({**query, "status": "Pending"})
-    college_count = await db.colleges.count_documents({}) if admin_claims.get("role") == "superadmin" else 0
+    user_query: dict[str, object] = {}
+    assignment_query: dict[str, object] = {}
+    teacher_query: dict[str, object] = {"role": "teacher"}
+
+    if role == "teacher":
+        if college:
+            college_filter = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
+            user_query["college"] = college_filter
+            assignment_query["college_name"] = college_filter
+            teacher_query["college"] = college_filter
+        if course:
+            course_regex = {"$regex": f"^{re.escape(course)}", "$options": "i"}
+            user_query["course_year"] = course_regex
+            assignment_query["year"] = course_regex
+            teacher_query["course"] = course_regex
+
+    user_count = await db.users.count_documents(user_query if role == "teacher" else {})
+    teacher_count = await db.admins.count_documents(teacher_query if role == "teacher" else {"role": "teacher"})
+    assignment_count = await db.assignments.count_documents(assignment_query if role == "teacher" else {})
+    pending_count = await db.assignments.count_documents({**assignment_query, "status": "Pending"} if role == "teacher" else {"status": "Pending"})
+    checked_count = await db.assignments.count_documents({**assignment_query, "status": "Checked"} if role == "teacher" else {"status": "Checked"})
+    rejected_count = await db.assignments.count_documents({**assignment_query, "status": "Rejected"} if role == "teacher" else {"status": "Rejected"})
+    college_count = await db.colleges.count_documents({}) if role == "superadmin" else 0
     return {
         "status": "success",
         "data": {
@@ -83,6 +107,8 @@ async def overview(claims: dict = Depends(get_current_claims), db = Depends(get_
             "teachers": int(teacher_count),
             "assignments": int(assignment_count),
             "pending": int(pending_count),
+            "checked": int(checked_count),
+            "rejected": int(rejected_count),
             "colleges": int(college_count),
         },
     }
@@ -93,13 +119,17 @@ async def students(claims: dict = Depends(get_current_claims), db = Depends(get_
     admin_claims = _require_admin(claims)
     query: dict[str, object] = {}
     if admin_claims.get("role") == "teacher":
-        query["college"] = admin_claims.get("college")
+        college, course = _teacher_scope(admin_claims)
+        if college:
+            query["college"] = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
+        if course:
+            query["course_year"] = {"$regex": f"^{re.escape(course)}", "$options": "i"}
 
     cursor = db.users.find(query).sort("id", -1)
     users = await cursor.to_list(length=None)
     items = [
         {
-            "id": user.get("id"),
+            "id": user.get("id") or str(user.get("_id")),
             "full_name": user.get("full_name"),
             "username": user.get("username"),
             "email": user.get("email"),
@@ -122,7 +152,7 @@ async def teachers(claims: dict = Depends(get_current_claims), db = Depends(get_
     admins = await cursor.to_list(length=None)
     items = [
         {
-            "id": admin.get("id"),
+            "id": admin.get("id") or str(admin.get("_id")),
             "name": admin.get("name"),
             "username": admin.get("username"),
             "email": admin.get("email"),
@@ -177,19 +207,33 @@ async def create_teacher(
 
 @router.put("/teachers/{teacher_id}", status_code=status.HTTP_200_OK)
 async def update_teacher(
-    teacher_id: int,
+    teacher_id: str,
     payload: TeacherUpdateRequest,
     claims: dict = Depends(get_current_claims),
     db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     _require_superadmin(claims)
-    teacher = await db.admins.find_one({"id": teacher_id, "role": "teacher"})
-    if not teacher:
+    teacher = await find_admin_by_id_or_objectid(db, teacher_id)
+    if not teacher or teacher.get("role") != "teacher":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher not found")
+
+    # Resilient duplicate checking for usernames/emails
+    from bson import ObjectId
+    exclude_cond = []
+    try:
+        val = int(teacher_id)
+        exclude_cond.append({"id": {"$ne": val}})
+    except (ValueError, TypeError):
+        pass
+    exclude_cond.append({"id": {"$ne": str(teacher_id)}})
+    try:
+        exclude_cond.append({"_id": {"$ne": ObjectId(str(teacher_id))}})
+    except Exception:
+        pass
 
     duplicate = await db.admins.find_one(
         {
-            "id": {"$ne": teacher_id},
+            "$and": exclude_cond,
             "$or": [{"username": payload.username}, {"email": payload.email}],
         }
     )
@@ -197,7 +241,7 @@ async def update_teacher(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Teacher username or email already exists")
 
     await db.admins.update_one(
-        {"id": teacher_id},
+        {"_id": teacher["_id"]},
         {
             "$set": {
                 "name": payload.name,
@@ -209,12 +253,12 @@ async def update_teacher(
             }
         },
     )
-    updated = await db.admins.find_one({"id": teacher_id})
+    updated = await db.admins.find_one({"_id": teacher["_id"]})
     return {
         "status": "success",
         "message": "Teacher updated",
         "teacher": {
-            "id": updated.get("id"),
+            "id": updated.get("id") or str(updated.get("_id")),
             "name": updated.get("name"),
             "username": updated.get("username"),
             "email": updated.get("email"),
@@ -227,30 +271,30 @@ async def update_teacher(
 
 @router.delete("/teachers/{teacher_id}", status_code=status.HTTP_200_OK)
 async def delete_teacher(
-    teacher_id: int,
+    teacher_id: str,
     claims: dict = Depends(get_current_claims),
     db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     _require_superadmin(claims)
-    teacher = await db.admins.find_one({"id": teacher_id, "role": "teacher"})
-    if not teacher:
+    teacher = await find_admin_by_id_or_objectid(db, teacher_id)
+    if not teacher or teacher.get("role") != "teacher":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher not found")
-    await db.admins.delete_one({"id": teacher_id})
+    await db.admins.delete_one({"_id": teacher["_id"]})
     return {"status": "success", "message": "Teacher deleted"}
 
 
 @router.patch("/teachers/{teacher_id}/password", status_code=status.HTTP_200_OK)
 async def reset_teacher_password(
-    teacher_id: int,
+    teacher_id: str,
     payload: TeacherPasswordUpdateRequest,
     claims: dict = Depends(get_current_claims),
     db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     _require_superadmin(claims)
-    teacher = await db.admins.find_one({"id": teacher_id, "role": "teacher"})
-    if not teacher:
+    teacher = await find_admin_by_id_or_objectid(db, teacher_id)
+    if not teacher or teacher.get("role") != "teacher":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher not found")
-    await db.admins.update_one({"id": teacher_id}, {"$set": {"password": hash_password(payload.new_password)}})
+    await db.admins.update_one({"_id": teacher["_id"]}, {"$set": {"password": hash_password(payload.new_password)}})
     return {"status": "success", "message": "Teacher password updated"}
 
 
@@ -350,10 +394,14 @@ async def delete_college(
 @router.get("/assignments", status_code=status.HTTP_200_OK)
 async def assignments(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
     admin_claims = _require_admin(claims)
-    query = {}
+    query: dict[str, object] = {}
     if admin_claims.get("role") == "teacher":
-        query["college_name"] = admin_claims.get("college")
-        
+        college, course = _teacher_scope(admin_claims)
+        if college:
+            query["college_name"] = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
+        if course:
+            query["year"] = {"$regex": f"^{re.escape(course)}", "$options": "i"}
+
     cursor = db.assignments.find(query).sort("id", -1)
     assignments_list = await cursor.to_list(length=None)
     items = []

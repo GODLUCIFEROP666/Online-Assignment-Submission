@@ -1,8 +1,8 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from app.core.dependencies import get_current_claims
+from app.core.dependencies import get_current_claims, find_assignment_by_id_or_objectid
 from app.core.config import get_settings
 from app.db.session import get_mongodb_db, get_next_sequence_value
 from app.schemas.assignments import AssignmentReview
@@ -52,8 +52,8 @@ def _assignment_payload(assignment: dict) -> dict[str, object]:
         graded_at_str = graded_at
 
     return {
-        "id": assignment.get("id"),
-        "user_id": assignment.get("user_id"),
+        "id": assignment.get("id") or str(assignment.get("_id")),
+        "user_id": str(assignment.get("user_id")) if assignment.get("user_id") is not None else None,
         "student_name": assignment.get("student_name"),
         "college_name": assignment.get("college_name"),
         "year": assignment.get("year"),
@@ -78,7 +78,21 @@ async def _current_student(db, claims: dict) -> dict:
     user_id = claims.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student access required")
-    user = await db.users.find_one({"id": user_id})
+    # Query student by ID or ObjectId
+    from bson import ObjectId
+    user = None
+    try:
+        val = int(user_id)
+        user = await db.users.find_one({"id": val})
+    except (ValueError, TypeError):
+        pass
+    if not user:
+        try:
+            user = await db.users.find_one({"_id": ObjectId(str(user_id))})
+        except Exception:
+            pass
+    if not user:
+        user = await db.users.find_one({"id": str(user_id)})
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
     return user
@@ -88,7 +102,21 @@ async def _current_admin(db, claims: dict) -> dict:
     admin_id = claims.get("admin_id")
     if not admin_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    admin = await db.admins.find_one({"id": admin_id})
+    # Query admin by ID or ObjectId
+    from bson import ObjectId
+    admin = None
+    try:
+        val = int(admin_id)
+        admin = await db.admins.find_one({"id": val})
+    except (ValueError, TypeError):
+        pass
+    if not admin:
+        try:
+            admin = await db.admins.find_one({"_id": ObjectId(str(admin_id))})
+        except Exception:
+            pass
+    if not admin:
+        admin = await db.admins.find_one({"id": str(admin_id)})
     if not admin:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found")
     return admin
@@ -100,20 +128,38 @@ async def list_assignments(
     mine: bool = True,
     status_filter: str | None = None,
     subject: str | None = None,
+    search: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
     db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     role = claims.get("role")
     query = {}
 
     if role == "student":
-        user = await _current_student(db, claims)
+        student = await _current_student(db, claims)
+        from bson import ObjectId
+        ids_to_match = [student.get("id")]
+        try:
+            ids_to_match.append(ObjectId(str(student.get("_id"))))
+        except Exception:
+            pass
+        ids_to_match.append(str(student.get("_id")))
+        ids_to_match = [x for x in ids_to_match if x is not None]
         query["$or"] = [
-            {"user_id": user.get("id")},
-            {"seat_no": user.get("seat_no")}
+            {"user_id": {"$in": ids_to_match}},
+            {"seat_no": student.get("seat_no")}
         ]
     elif role == "teacher":
         admin = await _current_admin(db, claims)
-        query["college_name"] = admin.get("college")
+        teacher_college = admin.get("college")
+        teacher_course = admin.get("course")
+        if teacher_college:
+            # Case-insensitive match so data entry differences don't break scoping
+            import re as _re
+            query["college_name"] = {"$regex": f"^{_re.escape(teacher_college)}$", "$options": "i"}
+        if teacher_course:
+            query["year"] = {"$regex": f"^{_re.escape(teacher_course)}", "$options": "i"}
     elif role != "superadmin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
 
@@ -121,8 +167,20 @@ async def list_assignments(
         query["status"] = status_filter
     if subject:
         query["subject"] = subject
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"subject": {"$regex": search, "$options": "i"}},
+        ]
+    if from_date or to_date:
+        date_query = {}
+        if from_date:
+            date_query["$gte"] = datetime.combine(date.fromisoformat(from_date), time.min)
+        if to_date:
+            date_query["$lte"] = datetime.combine(date.fromisoformat(to_date), time.max)
+        query["submit_date"] = date_query
 
-    cursor = db.assignments.find(query).sort("id", -1)
+    cursor = db.assignments.find(query).sort([("submit_date", -1), ("submit_time", -1), ("id", -1)])
     assignments = await cursor.to_list(length=None)
     items = [_assignment_payload(assignment) for assignment in assignments]
     return {"status": "success", "items": items, "count": len(items)}
@@ -203,15 +261,15 @@ async def create_assignment(
 
 @router.delete("/{assignment_id}", status_code=status.HTTP_200_OK)
 async def delete_assignment(
-    assignment_id: int,
+    assignment_id: str,
     claims: dict = Depends(get_current_claims),
     db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     user = await _current_student(db, claims)
-    assignment = await db.assignments.find_one({"id": assignment_id})
+    assignment = await find_assignment_by_id_or_objectid(db, assignment_id)
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
-    if assignment.get("user_id") not in (None, user.get("id")) and assignment.get("seat_no") != user.get("seat_no"):
+    if assignment.get("user_id") not in (None, user.get("id")) and str(assignment.get("user_id")) != str(user.get("_id")) and assignment.get("seat_no") != user.get("seat_no"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own submission")
     
     if assignment.get("file_name"):
@@ -224,30 +282,45 @@ async def delete_assignment(
         if file_path.exists():
             file_path.unlink()
             
-    await db.assignments.delete_one({"id": assignment_id})
+    await db.assignments.delete_one({"_id": assignment["_id"]})
     return {"status": "success", "message": "Assignment deleted"}
 
 
 @router.patch("/{assignment_id}/review", status_code=status.HTTP_200_OK)
 async def review_assignment(
-    assignment_id: int,
+    assignment_id: str,
     payload: AssignmentReview,
     claims: dict = Depends(get_current_claims),
     db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
+    # Only teacher/admin role may grade. SuperAdmin is a global manager, not a grader.
+    if claims.get("role") != "teacher":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assignment grading is restricted to Teacher/Admin accounts only. SuperAdmin cannot grade submissions."
+        )
+
     if payload.status not in ALLOWED_STATUSES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid assignment status")
 
     admin = await _current_admin(db, claims)
-    assignment = await db.assignments.find_one({"id": assignment_id})
+    assignment = await find_assignment_by_id_or_objectid(db, assignment_id)
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
 
-    if admin.get("role") == "teacher" and admin.get("college") and assignment.get("college_name") and assignment.get("college_name") != admin.get("college"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher can only review assignments from assigned college")
+    # Enforce teacher college scope — teacher can only grade their own college's submissions
+    import re as _re
+    teacher_college = admin.get("college") or ""
+    assign_college = assignment.get("college_name") or ""
+    if teacher_college and assign_college and not _re.match(f"^{_re.escape(teacher_college)}$", assign_college, _re.IGNORECASE):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher can only review assignments from their assigned college")
+
+    normalized_status = payload.status
+    if normalized_status == "Pending":
+        normalized_status = "Checked"
 
     update_doc = {
-        "status": payload.status,
+        "status": normalized_status,
         "marks": payload.marks,
         "teacher_note": payload.teacher_note,
         "graded_by": admin.get("username"),
@@ -255,17 +328,18 @@ async def review_assignment(
     }
 
     await db.assignments.update_one(
-        {"id": assignment_id},
+        {"_id": assignment["_id"]},
         {"$set": update_doc}
     )
     
-    updated_assignment = await db.assignments.find_one({"id": assignment_id})
+    updated_assignment = await db.assignments.find_one({"_id": assignment["_id"]})
     if updated_assignment and updated_assignment.get("user_id"):
+        recipient_user_id = updated_assignment.get("user_id")
         await create_notification(
             db,
-            recipient_user_id=updated_assignment.get("user_id"),
+            recipient_user_id=recipient_user_id,
             title="Assignment reviewed",
-            body=f"Your assignment {updated_assignment.get('title')} was marked {payload.status}.",
+            body=f"Your assignment {updated_assignment.get('title')} was marked {normalized_status}.",
             category="assignment",
             entity_type="assignment",
             entity_id=assignment_id,

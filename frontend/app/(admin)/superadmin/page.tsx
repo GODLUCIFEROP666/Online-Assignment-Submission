@@ -4,12 +4,12 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { AdminAnalyticsGrid } from "@/components/charts/admin-analytics-grid";
 import { AppShell } from "@/components/shell";
-import { API_BASE_URL, apiFetch } from "@/lib/api";
-import { adminNav, assignmentStatuses } from "@/lib/constants";
+import { apiFetch, downloadApiFile } from "@/lib/api";
+import { adminNav } from "@/lib/constants";
 import { useLiveRefresh } from "@/hooks/use-live-refresh";
 import {
   AlertCircle,
-  BookOpen,
+  CheckCircle2,
   Clock,
   FileDown,
   FileSpreadsheet,
@@ -34,30 +34,10 @@ type OverviewResponse = {
     teachers: number;
     assignments: number;
     pending: number;
+    checked: number;
+    rejected: number;
     colleges: number;
   };
-};
-
-type AssignmentItem = {
-  id: number;
-  student_name: string | null;
-  college_name: string | null;
-  year: string | null;
-  subject: string | null;
-  title: string | null;
-  status: string | null;
-  marks: number;
-  file_name: string | null;
-  teacher_note: string | null;
-  graded_by: string | null;
-  graded_at: string | null;
-  submit_date: string | null;
-};
-
-type AssignmentListResponse = {
-  status: string;
-  items: AssignmentItem[];
-  count: number;
 };
 
 type AnalyticsResponse = {
@@ -121,12 +101,6 @@ type CollegeListResponse = {
   count: number;
 };
 
-type ReviewDraft = {
-  status: string;
-  marks: string;
-  teacher_note: string;
-};
-
 type TeacherFormState = {
   name: string;
   username: string;
@@ -136,15 +110,18 @@ type TeacherFormState = {
   password: string;
 };
 
+// ──────────────────────────────────────────────────────────────────────────────
+// SuperAdmin Dashboard
+// Scope: global management — students, teachers, colleges, analytics, reports.
+// SuperAdmin does NOT grade assignments, review submissions, or enter marks.
+// That is exclusively the Teacher/Admin role.
+// ──────────────────────────────────────────────────────────────────────────────
 export default function SuperAdminPage() {
   const [overview, setOverview] = useState<OverviewResponse["data"] | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsResponse["data"] | null>(null);
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
   const [students, setStudents] = useState<StudentItem[]>([]);
   const [colleges, setColleges] = useState<CollegeItem[]>([]);
-  const [assignments, setAssignments] = useState<AssignmentItem[]>([]);
-  const [drafts, setDrafts] = useState<Record<number, ReviewDraft>>({});
-  const [savingAssignmentId, setSavingAssignmentId] = useState<number | null>(null);
   const [teacherForm, setTeacherForm] = useState<TeacherFormState>({
     name: "",
     username: "",
@@ -161,13 +138,12 @@ export default function SuperAdminPage() {
   const [savingCollege, setSavingCollege] = useState(false);
 
   async function loadDashboard() {
-    const [overviewPayload, analyticsPayload, teachersPayload, studentsPayload, collegesPayload, assignmentsPayload] = await Promise.all([
+    const [overviewPayload, analyticsPayload, teachersPayload, studentsPayload, collegesPayload] = await Promise.all([
       apiFetch<OverviewResponse>("/api/admin/overview"),
       apiFetch<AnalyticsResponse>("/api/analytics/dashboard"),
       apiFetch<TeacherListResponse>("/api/admin/teachers"),
       apiFetch<StudentListResponse>("/api/admin/students"),
       apiFetch<CollegeListResponse>("/api/admin/colleges"),
-      apiFetch<AssignmentListResponse>("/api/admin/assignments")
     ]);
 
     setOverview(overviewPayload.data);
@@ -175,19 +151,6 @@ export default function SuperAdminPage() {
     setTeachers(teachersPayload.items);
     setStudents(studentsPayload.items);
     setColleges(collegesPayload.items);
-    setAssignments(assignmentsPayload.items);
-    setDrafts(
-      Object.fromEntries(
-        assignmentsPayload.items.map((item) => [
-          item.id,
-          {
-            status: item.status ?? "Pending",
-            marks: String(item.marks ?? 0),
-            teacher_note: item.teacher_note ?? ""
-          }
-        ])
-      )
-    );
   }
 
   useLiveRefresh(() => loadDashboard().catch((error) => setMessage(error instanceof Error ? error.message : "Failed to load superadmin dashboard")));
@@ -337,60 +300,38 @@ export default function SuperAdminPage() {
     }
   }
 
-  async function saveReview(item: AssignmentItem) {
-    const draft = drafts[item.id];
-    if (!draft) return;
-    setSavingAssignmentId(item.id);
-    setMessage(null);
-    try {
-      const payload = await apiFetch<{ status: string; message: string; assignment: AssignmentItem }>(`/api/assignments/${item.id}/review`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          status: draft.status,
-          marks: Number(draft.marks) || 0,
-          teacher_note: draft.teacher_note.trim() || null
-        })
-      });
-      setAssignments((current) => current.map((row) => (row.id === item.id ? payload.assignment : row)));
-      setDrafts((current) => ({
-        ...current,
-        [item.id]: {
-          status: payload.assignment.status ?? "Pending",
-          marks: String(payload.assignment.marks ?? 0),
-          teacher_note: payload.assignment.teacher_note ?? ""
-        }
-      }));
-      setMessage(`Assignment #${item.id} reviewed.`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Review failed");
-    } finally {
-      setSavingAssignmentId(null);
-    }
+  async function exportStudents() {
+    await downloadApiFile("/api/admin/export/students.csv", "students.csv");
   }
 
   return (
     <AppShell
       title="SuperAdmin Dashboard"
-      subtitle="University-wide administration with college CRUD, teacher management, assignment review, student export, and live analytics."
+      subtitle="University-wide administration — manage colleges, teachers, students, analytics and reports."
       nav={adminNav}
     >
       <div className="space-y-6">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+
+        {/* ── Global Statistics ── */}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
           <StatCard label="Total Students" value={String(overview?.students ?? "-")} icon={<Users className="h-5 w-5 text-indigo-500" />} />
           <StatCard label="Active Teachers" value={String(overview?.teachers ?? "-")} icon={<UserCheck className="h-5 w-5 text-emerald-500" />} />
-          <StatCard label="Total Practicals" value={String(overview?.assignments ?? "-")} icon={<FileSpreadsheet className="h-5 w-5 text-violet-500" />} />
-          <StatCard label="Pending Audits" value={String(overview?.pending ?? "-")} icon={<Clock className="h-5 w-5 text-amber-500" />} />
-          <StatCard label="Colleges" value={String(overview?.colleges ?? colleges.length ?? "-")} icon={<School className="h-5 w-5 text-sky-500" />} />
+          <StatCard label="Total Assignments" value={String(overview?.assignments ?? "-")} icon={<FileSpreadsheet className="h-5 w-5 text-violet-500" />} />
+          <StatCard label="Pending" value={String(overview?.pending ?? "-")} icon={<Clock className="h-5 w-5 text-amber-500" />} />
+          <StatCard label="Checked" value={String(overview?.checked ?? "-")} icon={<CheckCircle2 className="h-5 w-5 text-emerald-500" />} />
+          <StatCard label="Rejected" value={String(overview?.rejected ?? "-")} icon={<AlertCircle className="h-5 w-5 text-rose-500" />} />
         </div>
 
+        {/* ── Analytics Overview ── */}
         <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
           <div className="flex items-center gap-2 pb-4 mb-4 border-b border-slate-100">
             <GraduationCap className="h-5 w-5 text-indigo-500" />
             <span className="text-sm font-extrabold text-slate-800 tracking-tight">Active Analytics Overview</span>
           </div>
-          <AdminAnalyticsGrid assignments={assignments} predictions={analytics?.predictions ?? []} clusters={analytics?.clusters ?? []} />
+          <AdminAnalyticsGrid assignments={[]} predictions={analytics?.predictions ?? []} clusters={analytics?.clusters ?? []} />
         </div>
 
+        {/* ── Teacher Management ── */}
         <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -512,6 +453,7 @@ export default function SuperAdminPage() {
           </div>
         </section>
 
+        {/* ── College Management ── */}
         <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -601,6 +543,7 @@ export default function SuperAdminPage() {
           </div>
         </section>
 
+        {/* ── Student Directory ── */}
         <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -608,15 +551,16 @@ export default function SuperAdminPage() {
                 <Users className="h-5 w-5 text-indigo-500" />
                 <span>Student Directory</span>
               </h3>
-              <p className="mt-1 text-sm text-slate-500">View student records and export the current directory as CSV.</p>
+              <p className="mt-1 text-sm text-slate-500">View all student records across all colleges and export as CSV.</p>
             </div>
-            <a
-              href={`${API_BASE_URL}/api/admin/export/students.csv`}
+            <button
+              type="button"
+              onClick={() => exportStudents().catch((error) => setMessage(error instanceof Error ? error.message : "CSV export failed"))}
               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600"
             >
               <FileDown className="h-4 w-4" />
               <span>Export CSV</span>
-            </a>
+            </button>
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-slate-100">
@@ -648,7 +592,7 @@ export default function SuperAdminPage() {
                       <td className="px-4 py-3 text-slate-600">{student.college ?? "-"}</td>
                       <td className="px-4 py-3 text-slate-600">{student.course_year ?? "-"}</td>
                       <td className="px-4 py-3 text-slate-600">
-                        {student.is_email_verified ? "Email verified" : "Email pending"} / {student.is_phone_verified ? "Phone verified" : "Phone pending"}
+                        {student.is_email_verified ? "Email ✓" : "Email pending"} / {student.is_phone_verified ? "Phone ✓" : "Phone pending"}
                       </td>
                     </tr>
                   ))
@@ -658,147 +602,34 @@ export default function SuperAdminPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-xl font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
-                <BookOpen className="h-5 w-5 text-indigo-500" />
-                <span>Assignment Review Queue</span>
-              </h3>
-              <p className="mt-1 text-sm text-slate-500">Review every submitted assignment, update status, and persist grades to MongoDB.</p>
+        {/* ── Assignment Statistics (read-only) ── */}
+        <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
+          <div className="flex items-center gap-2 pb-4 mb-4 border-b border-slate-100">
+            <FileSpreadsheet className="h-5 w-5 text-indigo-500" />
+            <span className="text-sm font-extrabold text-slate-800 tracking-tight">Assignment Statistics</span>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5 text-center">
+              <div className="text-3xl font-black text-indigo-600">{overview?.assignments ?? "-"}</div>
+              <div className="mt-1 text-xs font-bold uppercase tracking-wider text-slate-400">Total Submissions</div>
             </div>
-            <span className="rounded-full bg-indigo-50 border border-indigo-100 px-3 py-1 text-xs font-bold text-indigo-600">
-              {assignments.length} submissions
-            </span>
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5 text-center">
+              <div className="text-3xl font-black text-amber-500">{overview?.pending ?? "-"}</div>
+              <div className="mt-1 text-xs font-bold uppercase tracking-wider text-slate-400">Pending Review</div>
+            </div>
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5 text-center">
+              <div className="text-3xl font-black text-emerald-600">{overview?.checked ?? "-"}</div>
+              <div className="mt-1 text-xs font-bold uppercase tracking-wider text-slate-400">Checked &amp; Graded</div>
+            </div>
           </div>
-
-          <div className="space-y-4">
-            {assignments.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-400 font-semibold">
-                No submitted assignments available.
-              </div>
-            ) : (
-              assignments.map((item) => {
-                const draft = drafts[item.id] ?? {
-                  status: item.status ?? "Pending",
-                  marks: String(item.marks ?? 0),
-                  teacher_note: item.teacher_note ?? ""
-                };
-                return (
-                  <article key={item.id} className="rounded-3xl border border-slate-100 bg-slate-50/40 p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div>
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Assignment ID #{item.id}</div>
-                        <h4 className="mt-1 text-lg font-extrabold text-slate-800 tracking-tight">{item.title ?? "Untitled submission"}</h4>
-                        <p className="mt-1 text-xs font-semibold text-slate-500">
-                          Student: {item.student_name ?? "Anonymous"} | College: {item.college_name ?? "Unassigned"} | Subject: {item.subject ?? "Unassigned"}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-full bg-white border border-slate-200 px-3 py-1 text-xs font-bold text-slate-600">
-                          {item.status ?? "Pending"}
-                        </span>
-                        {item.file_name ? (
-                          <a
-                            href={`${API_BASE_URL}/api/files/${item.id}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 rounded-full bg-slate-950 px-3 py-1 text-xs font-bold text-white"
-                          >
-                            <FileDown className="h-3.5 w-3.5" />
-                            <span>Open file</span>
-                          </a>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="mt-5 grid gap-4 lg:grid-cols-[0.6fr_0.4fr]">
-                      <div className="rounded-2xl border border-slate-100 bg-white p-4 text-xs font-semibold text-slate-600">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <ReviewMeta label="Graded By" value={item.graded_by ?? "Not graded yet"} />
-                          <ReviewMeta label="Graded At" value={item.graded_at ?? "Not graded yet"} />
-                        </div>
-                        <div className="mt-4 border-t border-slate-100 pt-4">
-                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Teacher Notes</div>
-                          <p className="mt-2 whitespace-pre-wrap text-slate-600">{item.teacher_note ?? "No notes yet."}</p>
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl border border-slate-100 bg-white p-4 space-y-4">
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</label>
-                          <select
-                            value={draft.status}
-                            onChange={(event) =>
-                              setDrafts((current) => ({
-                                ...current,
-                                [item.id]: { ...draft, status: event.target.value }
-                              }))
-                            }
-                            className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs font-bold text-slate-700 outline-none"
-                          >
-                            {assignmentStatuses.map((status) => (
-                              <option key={status} value={status}>
-                                {status}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Marks</label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step="0.5"
-                            value={draft.marks}
-                            onChange={(event) =>
-                              setDrafts((current) => ({
-                                ...current,
-                                [item.id]: { ...draft, marks: event.target.value }
-                              }))
-                            }
-                            className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs font-bold text-slate-800 outline-none"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Notes</label>
-                          <textarea
-                            rows={3}
-                            value={draft.teacher_note}
-                            onChange={(event) =>
-                              setDrafts((current) => ({
-                                ...current,
-                                [item.id]: { ...draft, teacher_note: event.target.value }
-                              }))
-                            }
-                            className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs font-semibold text-slate-800 outline-none"
-                          />
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => saveReview(item)}
-                          disabled={savingAssignmentId === item.id}
-                          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-60"
-                        >
-                          {savingAssignmentId === item.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                          <span>Persist Review</span>
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })
-            )}
-          </div>
+          <p className="mt-4 text-xs text-slate-400 font-semibold">
+            Assignment grading and review is handled exclusively by Teacher/Admin accounts.
+          </p>
         </section>
 
         {message ? (
           <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-xs font-semibold text-slate-500 flex items-center gap-2">
-            <AlertCircle className="h-4.5 w-4.5 text-slate-400 shrink-0" />
+            <AlertCircle className="h-4 w-4 text-slate-400 shrink-0" />
             <span>{message}</span>
           </div>
         ) : null}
@@ -855,21 +686,6 @@ function Field({
           className={`w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3 ${icon ? "pl-11" : "px-4"} pr-4 text-sm font-medium text-slate-800 transition focus:bg-white placeholder:text-slate-300 disabled:opacity-60`}
         />
       </div>
-    </div>
-  );
-}
-
-function ReviewMeta({
-  label,
-  value
-}: Readonly<{
-  label: string;
-  value: string;
-}>) {
-  return (
-    <div>
-      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
-      <div className="mt-1 text-xs font-bold text-slate-700">{value}</div>
     </div>
   );
 }

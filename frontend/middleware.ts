@@ -8,13 +8,29 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const role = request.cookies.get("final2_role")?.value;
 
+  // Student-only routes
   if (["/dashboard", "/history", "/profile", "/guidelines"].some((route) => pathname === route || pathname.startsWith(`${route}/`))) {
     if (!hasProtectedSession(request) || role !== "student") {
       return NextResponse.redirect(new URL("/login", request.url));
     }
   }
 
-  if (["/teacher", "/superadmin", "/analytics"].some((route) => pathname === route || pathname.startsWith(`${route}/`))) {
+  // SuperAdmin-only routes — teachers must NOT access this area
+  if (pathname === "/superadmin" || pathname.startsWith("/superadmin/")) {
+    if (!hasProtectedSession(request) || role !== "superadmin") {
+      return NextResponse.redirect(new URL("/admin/login", request.url));
+    }
+  }
+
+  // Teacher-only routes — superadmin must NOT access this area
+  if (pathname === "/teacher" || pathname.startsWith("/teacher/")) {
+    if (!hasProtectedSession(request) || role !== "teacher") {
+      return NextResponse.redirect(new URL("/admin/login", request.url));
+    }
+  }
+
+  // Analytics — accessible to both teacher and superadmin
+  if (pathname === "/analytics" || pathname.startsWith("/analytics/")) {
     if (!hasProtectedSession(request) || !role || (role !== "teacher" && role !== "superadmin")) {
       return NextResponse.redirect(new URL("/admin/login", request.url));
     }
@@ -24,5 +40,13 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/history/:path*", "/profile/:path*", "/guidelines/:path*", "/teacher/:path*", "/superadmin/:path*", "/analytics/:path*"]
+  matcher: [
+    "/dashboard/:path*",
+    "/history/:path*",
+    "/profile/:path*",
+    "/guidelines/:path*",
+    "/teacher/:path*",
+    "/superadmin/:path*",
+    "/analytics/:path*",
+  ],
 };

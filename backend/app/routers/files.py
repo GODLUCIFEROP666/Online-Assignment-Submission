@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from app.core.dependencies import get_current_claims
+from app.core.dependencies import get_current_claims, find_assignment_by_id_or_objectid
 from app.db.session import get_mongodb_db
 from app.services.file_service import load_stored_file
 
@@ -20,19 +20,29 @@ async def get_file(
     download_name = None
     download_type = None
 
-    if file_id.isdigit():
-        assignment = await db.assignments.find_one({"id": int(file_id)})
-        if not assignment:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
-        if claims.get("role") == "student" and assignment.get("user_id") != claims.get("user_id"):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only access your own files")
-        if assignment.get("file_name"):
-            file_name = assignment.get("file_name")
-        else:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
-        gridfs_id = assignment.get("file_gridfs_id")
-        download_name = assignment.get("file_original_name") or assignment.get("file_name")
-        download_type = assignment.get("file_content_type")
+    assignment = await find_assignment_by_id_or_objectid(db, file_id)
+    if not assignment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    role = claims.get("role")
+    if role == "student" and str(assignment.get("user_id")) != str(claims.get("user_id")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only access your own files")
+
+    if role == "teacher":
+        teacher_college = claims.get("college") or ""
+        assign_college = assignment.get("college_name") or ""
+        import re as _re
+        if teacher_college and assign_college and not _re.match(f"^{_re.escape(teacher_college)}$", assign_college, _re.IGNORECASE):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher can only access files from their assigned college")
+
+    if assignment.get("file_name"):
+        file_name = assignment.get("file_name")
+    else:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    gridfs_id = assignment.get("file_gridfs_id")
+    download_name = assignment.get("file_original_name") or assignment.get("file_name")
+    download_type = assignment.get("file_content_type")
 
     stored = await load_stored_file(db, file_name=file_name, gridfs_id=gridfs_id)
     if not stored:
@@ -43,3 +53,4 @@ async def get_file(
     content = stored.get("content") or b""
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(content=content, media_type=media_type, headers=headers)
+

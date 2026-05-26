@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.core.dependencies import get_current_claims
+from app.core.dependencies import get_current_claims, find_user_by_id_or_objectid, find_admin_by_id_or_objectid
 from app.core.security import hash_password
 from app.db.session import get_mongodb_db
 from app.schemas.users import UserEmailUpdate, UserPasswordUpdate, UserPhoneUpdate, UserProfileUpdate
@@ -11,7 +11,7 @@ router = APIRouter()
 async def _has_duplicate_student(
     db,
     *,
-    user_id: int,
+    user_id_or_objectid,
     seat_no: str | None = None,
     email: str | None = None,
     phone: str | None = None,
@@ -26,8 +26,16 @@ async def _has_duplicate_student(
     if not predicates:
         return False
     
+    from bson import ObjectId
+    exclude_cond = []
+    exclude_cond.append({"id": {"$ne": user_id_or_objectid}})
+    try:
+        exclude_cond.append({"_id": {"$ne": ObjectId(str(user_id_or_objectid))}})
+    except Exception:
+        pass
+    
     query = {
-        "id": {"$ne": user_id},
+        "$and": exclude_cond,
         "$or": predicates
     }
     existing = await db.users.find_one(query, {"id": 1})
@@ -38,14 +46,14 @@ async def _has_duplicate_student(
 async def read_me(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
     role = claims.get("role")
     if role == "student":
-        user = await db.users.find_one({"id": claims.get("user_id")})
+        user = await find_user_by_id_or_objectid(db, claims.get("user_id"))
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         return {
             "status": "success",
             "role": role,
             "data": {
-                "id": user.get("id"),
+                "id": user.get("id") or str(user.get("_id")),
                 "full_name": user.get("full_name"),
                 "username": user.get("username"),
                 "email": user.get("email"),
@@ -55,17 +63,18 @@ async def read_me(claims: dict = Depends(get_current_claims), db = Depends(get_m
                 "seat_no": user.get("seat_no"),
                 "is_email_verified": bool(user.get("is_email_verified")),
                 "is_phone_verified": bool(user.get("is_phone_verified")),
+                "created_at": user.get("created_at").isoformat() if hasattr(user.get("created_at"), "isoformat") else user.get("created_at"),
             },
         }
 
-    admin = await db.admins.find_one({"id": claims.get("admin_id")})
+    admin = await find_admin_by_id_or_objectid(db, claims.get("admin_id"))
     if not admin:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found")
     return {
         "status": "success",
         "role": role,
         "data": {
-            "id": admin.get("id"),
+            "id": admin.get("id") or str(admin.get("_id")),
             "name": admin.get("name"),
             "username": admin.get("username"),
             "email": admin.get("email"),
@@ -77,15 +86,17 @@ async def read_me(claims: dict = Depends(get_current_claims), db = Depends(get_m
 
 @router.put("/me", status_code=status.HTTP_200_OK)
 async def update_me(payload: UserProfileUpdate, claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
-    user = await db.users.find_one({"id": claims.get("user_id")})
+    user = await find_user_by_id_or_objectid(db, claims.get("user_id"))
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    if await _has_duplicate_student(db, user_id=user.get("id"), seat_no=payload.seat_no):
+    
+    unique_id = user.get("id") or str(user.get("_id"))
+    if await _has_duplicate_student(db, user_id_or_objectid=unique_id, seat_no=payload.seat_no):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Seat number already in use")
     
     course_year = f"{payload.course} - {payload.sem}"
     await db.users.update_one(
-        {"id": user.get("id")},
+        {"_id": user["_id"]},
         {"$set": {
             "full_name": payload.full_name,
             "seat_no": payload.seat_no,
@@ -98,12 +109,12 @@ async def update_me(payload: UserProfileUpdate, claims: dict = Depends(get_curre
 
 @router.put("/me/password", status_code=status.HTTP_200_OK)
 async def update_password(payload: UserPasswordUpdate, claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
-    user = await db.users.find_one({"id": claims.get("user_id")})
+    user = await find_user_by_id_or_objectid(db, claims.get("user_id"))
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     
     await db.users.update_one(
-        {"id": user.get("id")},
+        {"_id": user["_id"]},
         {"$set": {"password": hash_password(payload.new_password)}}
     )
     return {"status": "success", "message": "Password updated"}
@@ -111,16 +122,18 @@ async def update_password(payload: UserPasswordUpdate, claims: dict = Depends(ge
 
 @router.put("/me/email", status_code=status.HTTP_200_OK)
 async def update_email(payload: UserEmailUpdate, claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
-    user = await db.users.find_one({"id": claims.get("user_id")})
+    user = await find_user_by_id_or_objectid(db, claims.get("user_id"))
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if payload.email == user.get("email"):
         return {"status": "success", "message": "Email unchanged"}
-    if await _has_duplicate_student(db, user_id=user.get("id"), email=payload.email):
+    
+    unique_id = user.get("id") or str(user.get("_id"))
+    if await _has_duplicate_student(db, user_id_or_objectid=unique_id, email=payload.email):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use")
     
     await db.users.update_one(
-        {"id": user.get("id")},
+        {"_id": user["_id"]},
         {"$set": {"email": payload.email, "is_email_verified": 0}}
     )
     return {"status": "success", "message": "Email updated"}
@@ -128,17 +141,18 @@ async def update_email(payload: UserEmailUpdate, claims: dict = Depends(get_curr
 
 @router.put("/me/phone", status_code=status.HTTP_200_OK)
 async def update_phone(payload: UserPhoneUpdate, claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
-    user = await db.users.find_one({"id": claims.get("user_id")})
+    user = await find_user_by_id_or_objectid(db, claims.get("user_id"))
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if payload.phone == user.get("phone"):
         return {"status": "success", "message": "Phone unchanged"}
-    if await _has_duplicate_student(db, user_id=user.get("id"), phone=payload.phone):
+    
+    unique_id = user.get("id") or str(user.get("_id"))
+    if await _has_duplicate_student(db, user_id_or_objectid=unique_id, phone=payload.phone):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already in use")
     
     await db.users.update_one(
-        {"id": user.get("id")},
+        {"_id": user["_id"]},
         {"$set": {"phone": payload.phone, "is_phone_verified": 0}}
     )
     return {"status": "success", "message": "Phone updated"}
-

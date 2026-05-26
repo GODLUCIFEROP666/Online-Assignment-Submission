@@ -24,7 +24,7 @@ export const courses = ["BCA", "BBA", "B.Com"] as const;
 
 export const courseSubjects: Record<string, readonly string[]> = {
   BCA: ["C Programming", "Web Design", "DBMS", "Mathematics", "Networking"],
-  BBA: ["Accounting", "Business Communication", "Economics", "Marketing", "Management"],
+  BBA: ["Accounting", "Business Communication", "Economics", "Marketing", "Mathematics", "Management"],
   "B.Com": ["Accounting", "Economics", "Finance", "Mathematics", "Taxation", "Law"]
 } as const;
 

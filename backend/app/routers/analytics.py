@@ -27,6 +27,8 @@ async def dashboard(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Analytics access required")
     if claims.get("role") == "teacher" and not college:
         college = claims.get("college")
+    if claims.get("role") == "teacher" and not course:
+        course = claims.get("course")
     query = AnalyticsQuery(college=college, course=course, subject=subject)
     return await analytics_overview(db, college=query.college, course=query.course, subject=query.subject)
 
@@ -43,6 +45,8 @@ async def predict(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Analytics access required")
     if claims.get("role") == "teacher" and not college:
         college = claims.get("college")
+    if claims.get("role") == "teacher" and not course:
+        course = claims.get("course")
     query = AnalyticsQuery(college=college, course=course, subject=subject)
     return await performance_predictions(db, college=query.college, course=query.course, subject=query.subject)
 
@@ -59,6 +63,8 @@ async def cluster(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Analytics access required")
     if claims.get("role") == "teacher" and not college:
         college = claims.get("college")
+    if claims.get("role") == "teacher" and not course:
+        course = claims.get("course")
     query = AnalyticsQuery(college=college, course=course, subject=subject)
     return await student_clusters(db, college=query.college, course=query.course, subject=query.subject)
 
