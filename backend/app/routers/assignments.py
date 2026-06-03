@@ -2,10 +2,11 @@ from datetime import date, datetime, time
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from app.core.dependencies import get_current_claims, find_assignment_by_id_or_objectid
 from app.core.config import get_settings
+from app.core.dependencies import find_assignment_by_id_or_objectid, get_current_claims
 from app.db.session import get_mongodb_db, get_next_sequence_value
 from app.schemas.assignments import AssignmentReview
+from app.services.assignment_scope import build_teacher_assignment_scope, combine_filters
 from app.services.file_service import gridfs_bucket, store_upload, uploads_dir
 from app.services.notification_service import create_notification
 
@@ -29,7 +30,7 @@ def _assignment_payload(assignment: dict) -> dict[str, object]:
     submit_date = assignment.get("submit_date")
     submit_time = assignment.get("submit_time")
     graded_at = assignment.get("graded_at")
-    
+
     if isinstance(submit_date, datetime):
         submit_date_str = submit_date.date().isoformat()
     elif hasattr(submit_date, "isoformat"):
@@ -78,8 +79,8 @@ async def _current_student(db, claims: dict) -> dict:
     user_id = claims.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student access required")
-    # Query student by ID or ObjectId
     from bson import ObjectId
+
     user = None
     try:
         val = int(user_id)
@@ -102,8 +103,8 @@ async def _current_admin(db, claims: dict) -> dict:
     admin_id = claims.get("admin_id")
     if not admin_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    # Query admin by ID or ObjectId
     from bson import ObjectId
+
     admin = None
     try:
         val = int(admin_id)
@@ -134,11 +135,12 @@ async def list_assignments(
     db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
     role = claims.get("role")
-    query = {}
+    filters: list[dict[str, object]] = []
 
     if role == "student":
         student = await _current_student(db, claims)
         from bson import ObjectId
+
         ids_to_match = [student.get("id")]
         try:
             ids_to_match.append(ObjectId(str(student.get("_id"))))
@@ -146,40 +148,43 @@ async def list_assignments(
             pass
         ids_to_match.append(str(student.get("_id")))
         ids_to_match = [x for x in ids_to_match if x is not None]
-        query["$or"] = [
-            {"user_id": {"$in": ids_to_match}},
-            {"seat_no": student.get("seat_no")}
-        ]
+        filters.append(
+            {
+                "$or": [
+                    {"user_id": {"$in": ids_to_match}},
+                    {"seat_no": student.get("seat_no")},
+                ]
+            }
+        )
     elif role == "teacher":
-        admin = await _current_admin(db, claims)
-        teacher_college = admin.get("college")
-        teacher_course = admin.get("course")
-        if teacher_college:
-            # Case-insensitive match so data entry differences don't break scoping
-            import re as _re
-            query["college_name"] = {"$regex": f"^{_re.escape(teacher_college)}$", "$options": "i"}
-        if teacher_course:
-            query["year"] = {"$regex": f"^{_re.escape(teacher_course)}", "$options": "i"}
+        scope = await build_teacher_assignment_scope(db, claims)
+        if scope:
+            filters.append(scope)
     elif role != "superadmin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
 
     if status_filter:
-        query["status"] = status_filter
+        filters.append({"status": status_filter})
     if subject:
-        query["subject"] = subject
+        filters.append({"subject": subject})
     if search:
-        query["$or"] = [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"subject": {"$regex": search, "$options": "i"}},
-        ]
+        filters.append(
+            {
+                "$or": [
+                    {"title": {"$regex": search, "$options": "i"}},
+                    {"subject": {"$regex": search, "$options": "i"}},
+                ]
+            }
+        )
     if from_date or to_date:
         date_query = {}
         if from_date:
             date_query["$gte"] = datetime.combine(date.fromisoformat(from_date), time.min)
         if to_date:
             date_query["$lte"] = datetime.combine(date.fromisoformat(to_date), time.max)
-        query["submit_date"] = date_query
+        filters.append({"submit_date": date_query})
 
+    query = combine_filters(filters)
     cursor = db.assignments.find(query).sort([("submit_date", -1), ("submit_time", -1), ("id", -1)])
     assignments = await cursor.to_list(length=None)
     items = [_assignment_payload(assignment) for assignment in assignments]
@@ -218,7 +223,7 @@ async def create_assignment(
         file_original_name = stored["original_name"]
 
     assignment_id = await get_next_sequence_value(db, "assignments")
-    
+
     submit_date = datetime.combine(date.today(), datetime.min.time())
     submit_time = datetime.now().replace(microsecond=0)
 
@@ -244,7 +249,7 @@ async def create_assignment(
         "graded_by": None,
         "graded_at": None,
     }
-    
+
     await db.assignments.insert_one(assignment_doc)
     await create_notification(
         db,
@@ -271,7 +276,7 @@ async def delete_assignment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
     if assignment.get("user_id") not in (None, user.get("id")) and str(assignment.get("user_id")) != str(user.get("_id")) and assignment.get("seat_no") != user.get("seat_no"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own submission")
-    
+
     if assignment.get("file_name"):
         if assignment.get("file_gridfs_id") is not None:
             try:
@@ -281,7 +286,7 @@ async def delete_assignment(
         file_path = uploads_dir() / assignment.get("file_name")
         if file_path.exists():
             file_path.unlink()
-            
+
     await db.assignments.delete_one({"_id": assignment["_id"]})
     return {"status": "success", "message": "Assignment deleted"}
 
@@ -297,7 +302,7 @@ async def review_assignment(
     if claims.get("role") != "teacher":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Assignment grading is restricted to Teacher/Admin accounts only. SuperAdmin cannot grade submissions."
+            detail="Assignment grading is restricted to Teacher/Admin accounts only. SuperAdmin cannot grade submissions.",
         )
 
     if payload.status not in ALLOWED_STATUSES:
@@ -308,11 +313,9 @@ async def review_assignment(
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
 
-    # Enforce teacher college scope — teacher can only grade their own college's submissions
-    import re as _re
-    teacher_college = admin.get("college") or ""
-    assign_college = assignment.get("college_name") or ""
-    if teacher_college and assign_college and not _re.match(f"^{_re.escape(teacher_college)}$", assign_college, _re.IGNORECASE):
+    # Enforce the same teacher scope used by the listing query.
+    scope = await build_teacher_assignment_scope(db, claims)
+    if scope and not await db.assignments.find_one({"_id": assignment["_id"], **scope}):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher can only review assignments from their assigned college")
 
     normalized_status = payload.status
@@ -324,14 +327,11 @@ async def review_assignment(
         "marks": payload.marks,
         "teacher_note": payload.teacher_note,
         "graded_by": admin.get("username"),
-        "graded_at": datetime.utcnow()
+        "graded_at": datetime.utcnow(),
     }
 
-    await db.assignments.update_one(
-        {"_id": assignment["_id"]},
-        {"$set": update_doc}
-    )
-    
+    await db.assignments.update_one({"_id": assignment["_id"]}, {"$set": update_doc})
+
     updated_assignment = await db.assignments.find_one({"_id": assignment["_id"]})
     if updated_assignment and updated_assignment.get("user_id"):
         recipient_user_id = updated_assignment.get("user_id")

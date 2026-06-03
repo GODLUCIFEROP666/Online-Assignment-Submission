@@ -15,6 +15,7 @@ from app.schemas.admin import (
     TeacherPasswordUpdateRequest,
     TeacherUpdateRequest,
 )
+from app.services.assignment_scope import build_teacher_assignment_scope, combine_filters
 from app.services.auth_service import build_token_pair
 
 router = APIRouter()
@@ -78,27 +79,30 @@ async def overview(claims: dict = Depends(get_current_claims), db = Depends(get_
     college, course = _teacher_scope(admin_claims)
 
     user_query: dict[str, object] = {}
-    assignment_query: dict[str, object] = {}
     teacher_query: dict[str, object] = {"role": "teacher"}
+    assignment_scope = await build_teacher_assignment_scope(db, admin_claims)
 
     if role == "teacher":
         if college:
-            college_filter = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
-            user_query["college"] = college_filter
-            assignment_query["college_name"] = college_filter
-            teacher_query["college"] = college_filter
+            user_query["college"] = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
+            teacher_query["college"] = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
         if course:
-            course_regex = {"$regex": f"^{re.escape(course)}", "$options": "i"}
-            user_query["course_year"] = course_regex
-            assignment_query["year"] = course_regex
-            teacher_query["course"] = course_regex
+            user_query["course_year"] = {"$regex": f"^{re.escape(course)}", "$options": "i"}
+            teacher_query["course"] = {"$regex": f"^{re.escape(course)}", "$options": "i"}
 
     user_count = await db.users.count_documents(user_query if role == "teacher" else {})
     teacher_count = await db.admins.count_documents(teacher_query if role == "teacher" else {"role": "teacher"})
-    assignment_count = await db.assignments.count_documents(assignment_query if role == "teacher" else {})
-    pending_count = await db.assignments.count_documents({**assignment_query, "status": "Pending"} if role == "teacher" else {"status": "Pending"})
-    checked_count = await db.assignments.count_documents({**assignment_query, "status": "Checked"} if role == "teacher" else {"status": "Checked"})
-    rejected_count = await db.assignments.count_documents({**assignment_query, "status": "Rejected"} if role == "teacher" else {"status": "Rejected"})
+    assignment_filters = [assignment_scope] if role == "teacher" and assignment_scope else []
+    assignment_count = await db.assignments.count_documents(combine_filters(assignment_filters) if role == "teacher" else {})
+    pending_count = await db.assignments.count_documents(
+        combine_filters([*assignment_filters, {"status": "Pending"}]) if role == "teacher" else {"status": "Pending"}
+    )
+    checked_count = await db.assignments.count_documents(
+        combine_filters([*assignment_filters, {"status": "Checked"}]) if role == "teacher" else {"status": "Checked"}
+    )
+    rejected_count = await db.assignments.count_documents(
+        combine_filters([*assignment_filters, {"status": "Rejected"}]) if role == "teacher" else {"status": "Rejected"}
+    )
     college_count = await db.colleges.count_documents({}) if role == "superadmin" else 0
     return {
         "status": "success",
@@ -396,11 +400,7 @@ async def assignments(claims: dict = Depends(get_current_claims), db = Depends(g
     admin_claims = _require_admin(claims)
     query: dict[str, object] = {}
     if admin_claims.get("role") == "teacher":
-        college, course = _teacher_scope(admin_claims)
-        if college:
-            query["college_name"] = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
-        if course:
-            query["year"] = {"$regex": f"^{re.escape(course)}", "$options": "i"}
+        query = await build_teacher_assignment_scope(db, admin_claims)
 
     cursor = db.assignments.find(query).sort("id", -1)
     assignments_list = await cursor.to_list(length=None)
