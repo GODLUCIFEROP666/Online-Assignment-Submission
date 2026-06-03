@@ -1,5 +1,5 @@
 # Ignore backend and legacy PHP FINAL2 directories (as you only want to push the frontend folder)
-backend/
+
 FINAL2/
 .venv/
 
