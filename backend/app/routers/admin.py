@@ -15,7 +15,6 @@ from app.schemas.admin import (
     TeacherPasswordUpdateRequest,
     TeacherUpdateRequest,
 )
-from app.services.assignment_scope import build_teacher_assignment_scope, combine_filters
 from app.services.auth_service import build_token_pair
 
 router = APIRouter()
@@ -80,8 +79,6 @@ async def overview(claims: dict = Depends(get_current_claims), db = Depends(get_
 
     user_query: dict[str, object] = {}
     teacher_query: dict[str, object] = {"role": "teacher"}
-    assignment_scope = await build_teacher_assignment_scope(db, admin_claims)
-
     if role == "teacher":
         if college:
             user_query["college"] = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
@@ -92,17 +89,10 @@ async def overview(claims: dict = Depends(get_current_claims), db = Depends(get_
 
     user_count = await db.users.count_documents(user_query if role == "teacher" else {})
     teacher_count = await db.admins.count_documents(teacher_query if role == "teacher" else {"role": "teacher"})
-    assignment_filters = [assignment_scope] if role == "teacher" and assignment_scope else []
-    assignment_count = await db.assignments.count_documents(combine_filters(assignment_filters) if role == "teacher" else {})
-    pending_count = await db.assignments.count_documents(
-        combine_filters([*assignment_filters, {"status": "Pending"}]) if role == "teacher" else {"status": "Pending"}
-    )
-    checked_count = await db.assignments.count_documents(
-        combine_filters([*assignment_filters, {"status": "Checked"}]) if role == "teacher" else {"status": "Checked"}
-    )
-    rejected_count = await db.assignments.count_documents(
-        combine_filters([*assignment_filters, {"status": "Rejected"}]) if role == "teacher" else {"status": "Rejected"}
-    )
+    assignment_count = await db.assignments.count_documents({})
+    pending_count = await db.assignments.count_documents({"status": "Pending"})
+    checked_count = await db.assignments.count_documents({"status": "Checked"})
+    rejected_count = await db.assignments.count_documents({"status": "Rejected"})
     college_count = await db.colleges.count_documents({}) if role == "superadmin" else 0
     return {
         "status": "success",
@@ -397,12 +387,8 @@ async def delete_college(
 
 @router.get("/assignments", status_code=status.HTTP_200_OK)
 async def assignments(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
-    admin_claims = _require_admin(claims)
-    query: dict[str, object] = {}
-    if admin_claims.get("role") == "teacher":
-        query = await build_teacher_assignment_scope(db, admin_claims)
-
-    cursor = db.assignments.find(query).sort("id", -1)
+    _require_admin(claims)
+    cursor = db.assignments.find({}).sort([("submit_date", -1), ("submit_time", -1), ("id", -1)])
     assignments_list = await cursor.to_list(length=None)
     items = []
     for assignment in assignments_list:
