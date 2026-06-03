@@ -583,7 +583,7 @@ export default function SuperAdminPage() {
                   </tr>
                 ) : (
                   students.map((student) => (
-                    <tr key={student.id} className="hover:bg-slate-50/50">
+                    <tr key={student.username} className="hover:bg-slate-50/50">
                       <td className="px-4 py-3">
                         <div className="font-bold text-slate-800">{student.full_name}</div>
                         <div className="text-xs text-slate-400">@{student.username}</div>

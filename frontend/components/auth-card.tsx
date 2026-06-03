@@ -13,19 +13,19 @@ export function AuthCard({
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
       <div className="grid w-full overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-2xl shadow-slate-200/50 lg:grid-cols-[1.1fr_0.9fr]">
-        
+
         {/* Left Side: Modern Premium Presentation Panel */}
         <section className="relative overflow-hidden bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 px-8 py-12 text-white sm:px-12 sm:py-16 flex flex-col justify-between">
           {/* Subtle Ambient Radial Glowing Blobs */}
           <div className="absolute top-0 right-0 h-80 w-80 bg-indigo-500/10 rounded-full blur-3xl" />
           <div className="absolute bottom-0 left-0 h-64 w-64 bg-rose-500/5 rounded-full blur-3xl" />
-          
+
           <div className="relative space-y-8">
             <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.24em] text-indigo-200">
               <Sparkles className="h-3 w-3 animate-pulse text-indigo-400" />
-              <span>FINAL2 Portal</span>
+              <span>Assignment Submission Portel</span>
             </div>
-            
+
             <div className="space-y-4">
               <h1 className="text-3xl font-extrabold sm:text-5xl tracking-tight leading-none bg-gradient-to-r from-white via-slate-100 to-indigo-200 bg-clip-text text-transparent">
                 {heading}
@@ -63,7 +63,7 @@ export function AuthCard({
             <span>v2.1.0</span>
           </div>
         </section>
-        
+
         {/* Right Side: Sleek Input Form Panel */}
         <section className="px-8 py-12 sm:px-12 sm:py-16 flex flex-col justify-center bg-slate-50/20">
           <div className="mb-8 rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
@@ -74,12 +74,12 @@ export function AuthCard({
             <h2 className="mt-2 text-2xl font-extrabold text-slate-800 tracking-tight">Credentials Gateway</h2>
             <p className="mt-1 text-xs text-slate-400 leading-relaxed">Provide your authorized username and passkey to establish a JWT session.</p>
           </div>
-          
+
           <div className="min-w-0">
             {children}
           </div>
         </section>
-        
+
       </div>
     </div>
   );
