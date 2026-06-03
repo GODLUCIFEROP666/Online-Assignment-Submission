@@ -27,13 +27,14 @@ async def get_file(
     role = claims.get("role")
     if role == "student" and str(assignment.get("user_id")) != str(claims.get("user_id")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only access your own files")
-
     if role == "teacher":
-        teacher_college = claims.get("college") or ""
-        assign_college = assignment.get("college_name") or ""
-        import re as _re
-        if teacher_college and assign_college and not _re.match(f"^{_re.escape(teacher_college)}$", assign_college, _re.IGNORECASE):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher can only access files from their assigned college")
+        # Teacher dashboard is globally visible; teachers can download any listed submission.
+        pass
+    elif role == "superadmin":
+        # SuperAdmin can access all assignment files.
+        pass
+    elif role != "student":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
 
     if assignment.get("file_name"):
         file_name = assignment.get("file_name")
@@ -53,4 +54,3 @@ async def get_file(
     content = stored.get("content") or b""
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(content=content, media_type=media_type, headers=headers)
-
