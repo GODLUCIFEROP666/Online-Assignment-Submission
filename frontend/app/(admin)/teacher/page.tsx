@@ -179,8 +179,8 @@ export default function TeacherDashboardPage() {
     >
       <div className="space-y-6">
         
-        {/* Statistics Panels Grid */}
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        {/* Statistics Panels Grid — sm:2col → md:3col → xl:5col to avoid orphan cards */}
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
           <StatCard 
             label="Total Students" 
             value={String(overview?.students ?? "-")} 
@@ -240,7 +240,8 @@ export default function TeacherDashboardPage() {
             </span>
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-slate-100">
+          {/* Student table — overflow-x-auto scroll container for mobile */}
+          <div className="overflow-x-auto rounded-2xl border border-slate-100">
             <table className="min-w-full divide-y divide-slate-100 text-left text-sm">
               <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
                 <tr>
@@ -262,14 +263,16 @@ export default function TeacherDashboardPage() {
                   students.map((student) => (
                     <tr key={student.username} className="hover:bg-slate-50/50">
                       <td className="px-4 py-3">
-                        <div className="font-bold text-slate-800">{student.full_name}</div>
+                        <div className="font-bold text-slate-800 whitespace-nowrap">{student.full_name}</div>
                         <div className="text-xs text-slate-400">@{student.username}</div>
                       </td>
-                      <td className="px-4 py-3 text-slate-600">{student.seat_no}</td>
-                      <td className="px-4 py-3 text-slate-600">{student.college ?? "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">{student.email}</td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{student.seat_no}</td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{student.college ?? "-"}</td>
+                      <td className="px-4 py-3 text-slate-600">
+                        <span className="break-anywhere">{student.email}</span>
+                      </td>
                       <td className="px-4 py-3">
-                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-600">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-600 whitespace-nowrap">
                           {student.is_email_verified ? "Email ✓" : "Email pending"}
                           <span className="text-slate-300">•</span>
                           {student.is_phone_verified ? "Phone ✓" : "Phone pending"}

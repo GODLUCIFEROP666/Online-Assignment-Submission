@@ -173,13 +173,17 @@ export default function StudentHistoryPage() {
 
         <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
           <form
-            className="grid gap-4 lg:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto]"
+            className="grid gap-3 sm:gap-4
+              grid-cols-1
+              sm:grid-cols-2
+              lg:grid-cols-[1.5fr_1fr_1fr]
+              xl:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto]"
             onSubmit={(event) => {
               event.preventDefault();
               loadAssignments().catch(() => undefined);
             }}
           >
-            <div className="lg:col-span-2">
+            <div className="sm:col-span-2 lg:col-span-1 xl:col-span-2">
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
                 Keyword Search
               </label>
@@ -280,11 +284,12 @@ export default function StudentHistoryPage() {
               </div>
             </div>
 
-            <div className="flex gap-2 lg:self-end">
+            {/* Filter + Reset buttons — full-width on mobile, auto on desktop */}
+            <div className="flex gap-2 sm:col-span-2 lg:col-span-1 xl:col-span-1 xl:self-end">
               <button
                 type="submit"
                 disabled={loading}
-                className="flex-1 rounded-2xl bg-slate-900 py-3.5 px-5 text-sm font-bold text-white shadow-sm hover:bg-slate-800 transition disabled:opacity-60"
+                className="flex-1 rounded-2xl bg-slate-900 py-3.5 px-4 text-sm font-bold text-white shadow-sm hover:bg-slate-800 transition disabled:opacity-60"
               >
                 Filter
               </button>
@@ -304,7 +309,7 @@ export default function StudentHistoryPage() {
                     toDate: ""
                   }).catch(() => undefined);
                 }}
-                className="rounded-2xl border border-slate-200 bg-white py-3.5 px-5 text-sm font-bold text-slate-600 shadow-sm hover:bg-slate-50 transition"
+                className="rounded-2xl border border-slate-200 bg-white py-3.5 px-4 text-sm font-bold text-slate-600 shadow-sm hover:bg-slate-50 transition"
               >
                 Reset
               </button>

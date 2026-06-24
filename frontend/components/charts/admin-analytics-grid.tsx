@@ -84,7 +84,7 @@ export function AdminAnalyticsGrid({
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2">
         <ChartCard title="Assignment status" subtitle="Distribution of submissions by review state.">
           <DonutChart segments={statusSegments} centerLabel="Status" emptyLabel="No assignments" />
         </ChartCard>
@@ -109,7 +109,7 @@ export function AdminAnalyticsGrid({
         </ChartCard>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2">
         <ChartCard title="College spread" subtitle="Assignments grouped by college.">
           <BarChart points={collegeBars} color="#10b981" emptyLabel="No college data" />
         </ChartCard>

@@ -196,7 +196,7 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
+        <div className="grid gap-6 lg:grid-cols-[280px_1fr] min-w-0">
           <section className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm text-center">
             <div className="mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-500 to-indigo-600 text-4xl font-black text-white shadow-xl shadow-indigo-600/30 ring-4 ring-indigo-50">
               {avatarLetter}
@@ -324,17 +324,18 @@ function Row({
   verified?: boolean;
 }>) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3.5 last:border-b-0 last:pb-0">
-      <dt className="text-slate-400 font-medium">{label}</dt>
-      <dd className="text-right flex items-center gap-1.5 text-slate-800">
-        <span>{value}</span>
+    <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3.5 last:border-b-0 last:pb-0">
+      <dt className="text-slate-400 font-medium shrink-0">{label}</dt>
+      <dd className="min-w-0 text-right flex items-center gap-1.5 text-slate-800 justify-end">
+        {/* Use break-anywhere to handle long emails/phones on 320px */}
+        <span className="break-anywhere text-right">{value}</span>
         {verified !== undefined &&
           (verified ? (
-            <span className="text-emerald-500 flex h-4 w-4 items-center justify-center bg-emerald-50 rounded-full border border-emerald-100">
+            <span className="text-emerald-500 flex h-4 w-4 items-center justify-center bg-emerald-50 rounded-full border border-emerald-100 shrink-0">
               <ShieldCheck className="h-2.5 w-2.5" />
             </span>
           ) : (
-            <span className="text-amber-500 flex h-4 w-4 items-center justify-center bg-amber-50 rounded-full border border-amber-100">
+            <span className="text-amber-500 flex h-4 w-4 items-center justify-center bg-amber-50 rounded-full border border-amber-100 shrink-0">
               <ShieldAlert className="h-2.5 w-2.5" />
             </span>
           ))}
