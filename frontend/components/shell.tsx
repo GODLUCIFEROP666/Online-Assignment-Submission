@@ -44,9 +44,21 @@ export function AppShell({
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [role, setRole] = useState<string | null>(null);
+  const [windowWidth, setWindowWidth] = useState<number>(1024);
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
     setRole(getSessionRole());
+    setIsMounted(true);
+    setWindowWidth(window.innerWidth);
+
+    const handleResize = () => {
+      setWindowWidth(window.innerWidth);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
   }, []);
 
   // Close mobile menu on route change
@@ -65,6 +77,8 @@ export function AppShell({
       document.body.style.overflow = "";
     };
   }, [mobileMenuOpen]);
+
+  const showSidebar = isMounted ? windowWidth >= 1024 : true;
 
   async function handleLogout() {
     const currentRole = getSessionRole() ?? role;
@@ -130,30 +144,32 @@ export function AppShell({
             </Link>
           </div>
 
-          {/* Desktop right-side controls */}
-          <div className="hidden items-center gap-3 md:flex shrink-0">
-            <div className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600 shadow-sm border border-indigo-100/50">
+          {/* Header controls — responsive but unified to ensure hamburger/menu is always visible */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <div className="hidden sm:flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600 border border-indigo-100/50">
               <Sparkles className="h-3 w-3 animate-pulse" />
               <span>{formattedRole} Mode</span>
             </div>
-            <div className="h-4 w-px bg-slate-200" />
+            <div className="hidden sm:block h-4 w-px bg-slate-200" />
+            
             <NotificationBell />
             <div className="h-4 w-px bg-slate-200" />
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
-            >
-              <LogOut className="h-3 w-3" />
-              <span>Sign out</span>
-            </button>
-          </div>
+            
+            <div className="hidden md:flex items-center gap-3">
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+              >
+                <LogOut className="h-3 w-3" />
+                <span>Sign out</span>
+              </button>
+              <div className="h-4 w-px bg-slate-200" />
+            </div>
 
-          {/* Mobile: notification + hamburger */}
-          <div className="flex items-center gap-1 md:hidden shrink-0">
-            <NotificationBell />
+            {/* Menu toggle button — ALWAYS visible on all screen sizes to guarantee navigation accessibility */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 transition-colors focus:outline-none"
+              className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 transition-colors focus:outline-none flex items-center justify-center"
               aria-label="Toggle menu"
               aria-expanded={mobileMenuOpen}
             >
@@ -166,7 +182,7 @@ export function AppShell({
       {/* Mobile Drawer Backdrop + Drawer — z-40 (below z-50 header) */}
       {mobileMenuOpen && (
         <div
-          className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm"
           onClick={() => setMobileMenuOpen(false)}
           aria-hidden="true"
         >
@@ -240,10 +256,10 @@ export function AppShell({
 
       {/* Main Grid Layout */}
       <div className="mx-auto w-full max-w-none px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8 xl:px-12 2xl:px-16">
-        <div className="grid gap-6 lg:grid-cols-[260px_1fr] xl:grid-cols-[280px_1fr]">
+        <div className={`grid gap-6 ${showSidebar ? "lg:grid-cols-[260px_1fr] xl:grid-cols-[280px_1fr]" : "grid-cols-1"}`}>
           
-          {/* Sidebar Left Navigation — only on lg+ */}
-          <aside className="hidden lg:flex flex-col rounded-3xl border border-slate-100 bg-white p-5 shadow-premium glass-panel h-fit sticky top-[73px]">
+          {/* Sidebar Left Navigation */}
+          <aside className={`${showSidebar ? "flex" : "hidden"} flex-col rounded-3xl border border-slate-100 bg-white p-5 shadow-premium glass-panel h-fit sticky top-[73px]`}>
             <div className="mb-6 pb-4 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
