@@ -21,7 +21,8 @@ import {
   Loader2,
   AlertCircle,
   FileText,
-  Bookmark
+  Bookmark,
+  Pencil
 } from "lucide-react";
 
 type OverviewResponse = {
@@ -104,6 +105,7 @@ export default function TeacherDashboardPage() {
   const [drafts, setDrafts] = useState<Record<number, ReviewDraft>>({});
   const [savingId, setSavingId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [editingIds, setEditingIds] = useState<Set<number>>(new Set());
 
   useLiveRefresh(async () => {
     try {
@@ -159,6 +161,7 @@ export default function TeacherDashboardPage() {
           teacher_note: payload.assignment.teacher_note ?? ""
         }
       }));
+      setEditingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; });
       setMessage(`Assignment #${item.id} reviewed successfully.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Review failed");
@@ -376,91 +379,164 @@ export default function TeacherDashboardPage() {
                       </div>
                     </div>
 
-                    {/* Right Column: Interactive inputs form */}
-                    <div className="space-y-4 rounded-2xl border border-slate-100 p-5 bg-white shadow-sm">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                            Change Status
-                          </label>
-                          <div className="relative mt-2">
-                            <select
-                              value={draft.status}
+                    {/* Right Column: Grading Summary (read-only) or Interactive form */}
+                    {(() => {
+                      const isGraded = item.status === "Checked" || item.status === "Rejected";
+                      const isEditing = editingIds.has(item.id);
+                      const showForm = !isGraded || isEditing;
+
+                      if (!showForm) {
+                        return (
+                          <div className="space-y-4 rounded-2xl border border-slate-100 p-5 bg-white shadow-sm">
+                            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                                <span>Grading Summary</span>
+                              </div>
+                              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                                item.status === "Checked"
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                                  : "bg-rose-50 text-rose-700 border border-rose-100"
+                              }`}>
+                                {item.status}
+                              </span>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div>
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Marks Awarded</div>
+                                <div className="mt-1 text-lg font-black text-slate-800">{item.marks ?? 0}<span className="text-xs font-bold text-slate-400"> / 100</span></div>
+                              </div>
+                              <div>
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                  <UserCheck className="h-3 w-3 text-indigo-500" />
+                                  <span>Graded By</span>
+                                </div>
+                                <div className="mt-1 text-xs font-bold text-slate-700">{item.graded_by ?? "-"}</div>
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                <Clock className="h-3 w-3 text-indigo-500" />
+                                <span>Graded Date & Time</span>
+                              </div>
+                              <div className="mt-1 text-xs font-bold text-slate-700">{item.graded_at ?? "-"}</div>
+                            </div>
+                            <div className="border-t border-slate-100 pt-3">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Professor Remarks</div>
+                              <p className="mt-2 whitespace-pre-wrap text-xs font-semibold text-slate-600 leading-relaxed">
+                                {item.teacher_note ?? "No remarks provided."}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setEditingIds((prev) => new Set(prev).add(item.id))}
+                              className="w-full flex items-center justify-center gap-1.5 rounded-2xl border border-slate-200 bg-slate-50 py-3 text-xs font-bold text-slate-700 hover:bg-slate-100 active:scale-[0.98] transition"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              <span>Edit Grade</span>
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-4 rounded-2xl border border-slate-100 p-5 bg-white shadow-sm">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                Change Status
+                              </label>
+                              <div className="relative mt-2">
+                                <select
+                                  value={draft.status}
+                                  onChange={(event) =>
+                                    setDrafts((current) => ({
+                                      ...current,
+                                      [item.id]: { ...draft, status: event.target.value }
+                                    }))
+                                  }
+                                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3 px-4 text-xs font-bold text-slate-700 outline-none transition focus:bg-white appearance-none"
+                                >
+                                  {assignmentStatuses.map((status) => (
+                                    <option key={status} value={status}>
+                                      {status}
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-slate-400 text-xs font-bold">
+                                  ▼
+                                </div>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                Grade Score (0-100)
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step="0.5"
+                                value={draft.marks}
+                                onChange={(event) =>
+                                  setDrafts((current) => ({
+                                    ...current,
+                                      [item.id]: { ...draft, marks: event.target.value }
+                                  }))
+                                }
+                                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3 px-4 text-xs font-bold text-slate-800 transition focus:bg-white outline-none"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              Professor Review Feedback Notes
+                            </label>
+                            <textarea
+                              value={draft.teacher_note}
                               onChange={(event) =>
                                 setDrafts((current) => ({
                                   ...current,
-                                  [item.id]: { ...draft, status: event.target.value }
+                                  [item.id]: { ...draft, teacher_note: event.target.value }
                                 }))
                               }
-                              className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3 px-4 text-xs font-bold text-slate-700 outline-none transition focus:bg-white appearance-none"
+                              rows={3}
+                              placeholder="Provide code improvement suggestions or grading explanations..."
+                              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs font-semibold text-slate-800 transition focus:bg-white outline-none"
+                            />
+                          </div>
+
+                          <div className="flex gap-3">
+                            {isEditing ? (
+                              <button
+                                type="button"
+                                onClick={() => setEditingIds((prev) => { const next = new Set(prev); next.delete(item.id); return next; })}
+                                className="flex-1 flex items-center justify-center gap-1.5 rounded-2xl border border-slate-200 bg-slate-50 py-3 text-xs font-bold text-slate-600 hover:bg-slate-100 active:scale-[0.98] transition"
+                              >
+                                <span>Cancel</span>
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => saveReview(item)}
+                              disabled={savingId === item.id}
+                              className={`${isEditing ? 'flex-1' : 'w-full'} flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-indigo-500 to-indigo-600 py-3 text-xs font-bold text-white shadow-sm hover:from-indigo-600 hover:to-indigo-700 active:scale-[0.98] disabled:opacity-60`}
                             >
-                              {assignmentStatuses.map((status) => (
-                                <option key={status} value={status}>
-                                  {status}
-                                </option>
-                              ))}
-                            </select>
-                            <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-slate-400 text-xs font-bold">
-                              ▼
-                            </div>
+                              {savingId === item.id ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  <span>Updating database review...</span>
+                                </>
+                              ) : (
+                                <span>{isEditing ? 'Update Grade & Remarks' : 'Submit Grade & Remarks'}</span>
+                              )}
+                            </button>
                           </div>
                         </div>
-
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                            Grade Score (0-100)
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step="0.5"
-                            value={draft.marks}
-                            onChange={(event) =>
-                              setDrafts((current) => ({
-                                ...current,
-                                  [item.id]: { ...draft, marks: event.target.value }
-                              }))
-                            }
-                            className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3 px-4 text-xs font-bold text-slate-800 transition focus:bg-white outline-none"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          Professor Review Feedback Notes
-                        </label>
-                        <textarea
-                          value={draft.teacher_note}
-                          onChange={(event) =>
-                            setDrafts((current) => ({
-                              ...current,
-                              [item.id]: { ...draft, teacher_note: event.target.value }
-                            }))
-                          }
-                          rows={3}
-                          placeholder="Provide code improvement suggestions or grading explanations..."
-                          className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs font-semibold text-slate-800 transition focus:bg-white outline-none"
-                        />
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => saveReview(item)}
-                        disabled={savingId === item.id}
-                        className="w-full flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-indigo-500 to-indigo-600 py-3 text-xs font-bold text-white shadow-sm hover:from-indigo-600 hover:to-indigo-700 active:scale-[0.98] disabled:opacity-60"
-                      >
-                        {savingId === item.id ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            <span>Updating database review...</span>
-                          </>
-                        ) : (
-                          <span>Submit Grade & Remarks</span>
-                        )}
-                      </button>
-                    </div>
+                      );
+                    })()}
 
                   </div>
                 </article>

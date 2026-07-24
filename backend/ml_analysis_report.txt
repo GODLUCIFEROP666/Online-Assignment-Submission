@@ -1,0 +1,45 @@
+============================================================
+            ACADEMIC PERFORMANCE ML ANALYSIS REPORT
+============================================================
+Analyzed on: 2026-07-24 09:31:46
+Total Assignment Records: 51
+Total Students: 16
+
+--- 1. Clusters ---
+  username  total_submissions  avg_marks                                        profile_label
+ student_1                  5  89.800000           High Achiever (High Activity / Top Grades)
+ student_2                  4  88.750000           High Achiever (High Activity / Top Grades)
+ student_3                  5  91.400000           High Achiever (High Activity / Top Grades)
+ student_4                  4  92.250000           High Achiever (High Activity / Top Grades)
+ student_5                  5  91.200000           High Achiever (High Activity / Top Grades)
+   jignesh                  4  35.000000 Average Performer (Medium Activity / Passing Grades)
+ student_6                  3  67.333333 Average Performer (Medium Activity / Passing Grades)
+ student_7                  4  51.250000 Average Performer (Medium Activity / Passing Grades)
+ student_9                  3  49.333333 Average Performer (Medium Activity / Passing Grades)
+student_10                  4  51.000000 Average Performer (Medium Activity / Passing Grades)
+ student_8                  2  58.000000      At-Risk Performer (Low Activity / Lower Grades)
+student_11                  2  67.000000      At-Risk Performer (Low Activity / Lower Grades)
+student_12                  2  72.000000      At-Risk Performer (Low Activity / Lower Grades)
+student_13                  1  36.000000      At-Risk Performer (Low Activity / Lower Grades)
+student_14                  2  18.500000      At-Risk Performer (Low Activity / Lower Grades)
+student_15                  1  38.000000      At-Risk Performer (Low Activity / Lower Grades)
+
+--- 2. Predictions ---
+  username  total_submissions  avg_marks  pass_probability
+ student_1                  5  89.800000             100.0
+ student_2                  4  88.750000             100.0
+ student_3                  5  91.400000             100.0
+ student_4                  4  92.250000             100.0
+ student_6                  3  67.333333             100.0
+ student_5                  5  91.200000             100.0
+ student_7                  4  51.250000             100.0
+ student_8                  2  58.000000             100.0
+student_12                  2  72.000000             100.0
+ student_9                  3  49.333333             100.0
+student_10                  4  51.000000             100.0
+student_11                  2  67.000000             100.0
+   jignesh                  4  35.000000              90.0
+student_14                  2  18.500000              20.0
+student_13                  1  36.000000               0.0
+student_15                  1  38.000000               0.0
+
