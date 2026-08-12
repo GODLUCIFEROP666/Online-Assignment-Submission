@@ -4,11 +4,11 @@ import { LoginForm } from "@/components/forms/login-form";
 export default function LoginPage() {
   return (
     <AuthCard
-      heading="Welcom to Online Assignment Submission Portel"
-
-      description="Student and admin access will be routed through JWT-backed FastAPI authentication."
+      heading="Welcome to Online Assignment Submission Portal"
+      description="Access your academic portal to submit, track, and grade assignments effortlessly with secure JWT authentication."
     >
       <LoginForm />
     </AuthCard>
   );
 }
+

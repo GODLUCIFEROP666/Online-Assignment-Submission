@@ -59,7 +59,7 @@ export function ResetPasswordForm() {
             placeholder="e.g. john@college.edu"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-4 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white"
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-4 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white focus:border-indigo-500"
           />
         </div>
       </div>
@@ -79,7 +79,7 @@ export function ResetPasswordForm() {
             placeholder="Enter security key"
             value={otp}
             onChange={(event) => setOtp(event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-4 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white"
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-4 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white focus:border-indigo-500"
           />
         </div>
       </div>
@@ -99,7 +99,7 @@ export function ResetPasswordForm() {
             placeholder="••••••••"
             value={newPassword}
             onChange={(event) => setNewPassword(event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-12 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white"
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-12 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white focus:border-indigo-500"
           />
           <button
             type="button"
@@ -116,7 +116,7 @@ export function ResetPasswordForm() {
         <div className={`flex items-start gap-2.5 rounded-2xl border p-4 text-xs font-semibold leading-relaxed ${
           message.toLowerCase().includes("redirecting") 
             ? "border-emerald-100 bg-emerald-50 text-emerald-700 shadow-sm"
-            : "border-rose-100 bg-rose-50 text-rose-700 shadow-sm"
+            : "border-rose-100 bg-rose-50 text-rose-700 shadow-sm animate-shake"
         }`}>
           <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
           <span>{message}</span>
@@ -127,7 +127,7 @@ export function ResetPasswordForm() {
       <button
         type="submit"
         disabled={loading}
-        className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-500 to-indigo-600 py-3.5 text-sm font-bold text-white shadow-md transition hover:from-indigo-600 hover:to-indigo-700 active:scale-[0.98] disabled:opacity-60"
+        className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-700 py-3.5 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition-all duration-200 hover:from-indigo-700 hover:to-indigo-800 hover:shadow-xl hover:shadow-indigo-600/30 active:scale-[0.98] disabled:opacity-60"
       >
         {loading ? (
           <>
@@ -138,6 +138,7 @@ export function ResetPasswordForm() {
           <span>Update Credentials</span>
         )}
       </button>
+
 
       {/* Footer redirection link */}
       <div className="pt-4 border-t border-slate-100 text-center text-xs text-slate-400">

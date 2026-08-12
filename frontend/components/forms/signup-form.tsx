@@ -16,8 +16,10 @@ import {
   CheckCircle2, 
   Smartphone, 
   UserCheck, 
-  AlertCircle
+  AlertCircle,
+  ChevronDown
 } from "lucide-react";
+
 
 type StartResponse = {
   status: string;
@@ -172,7 +174,7 @@ export function SignupForm() {
 
       {!registrationId ? (
         /* PHASE 1: Fill details form */
-        <div className="space-y-5">
+        <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Full Name" value={fullName} onChange={setFullName} icon={<User className="h-4 w-4" />} placeholder="John Doe" />
             <Field label="Desired Username" value={username} onChange={setUsername} icon={<UserCheck className="h-4 w-4" />} placeholder="johndoe12" />
@@ -182,8 +184,9 @@ export function SignupForm() {
             <Field label="Choose Password" type="password" value={password} onChange={setPassword} icon={<Lock className="h-4 w-4" />} placeholder="••••••••" />
           </div>
           
-          <div className="grid gap-4 sm:grid-cols-3">
-            <SelectField label="College" value={college} onChange={setCollege} options={collegeOptions} icon={<GraduationCap className="h-4 w-4" />} />
+          <SelectField label="College" value={college} onChange={setCollege} options={collegeOptions} icon={<GraduationCap className="h-4 w-4" />} />
+
+          <div className="grid gap-4 sm:grid-cols-2">
             <SelectField label="Course" value={course} onChange={setCourse} options={courses} icon={<BookOpen className="h-4 w-4" />} />
             <SelectField label="Semester" value={sem} onChange={setSem} options={semesters} icon={<Sparkles className="h-4 w-4" />} />
           </div>
@@ -192,7 +195,7 @@ export function SignupForm() {
             type="button"
             onClick={startRegistration}
             disabled={loading || !fullName || !username || !seatNo || !email || !phone || !password || !college || !course || !sem}
-            className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-500 to-indigo-600 py-3.5 text-sm font-bold text-white shadow-md shadow-indigo-500/10 transition hover:from-indigo-600 hover:to-indigo-700 hover:shadow-lg disabled:opacity-50 disabled:pointer-events-none"
+            className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-700 py-3.5 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition hover:from-indigo-700 hover:to-indigo-800 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
           >
             <span>Initiate OTP Verification</span>
             <ArrowRight className="h-4 w-4" />
@@ -313,7 +316,7 @@ export function SignupForm() {
         <div className={`flex items-start gap-2.5 rounded-2xl border p-4 text-xs font-semibold leading-relaxed ${
           message.includes("complete") || message.includes("verified") || message.includes("generated")
             ? "border-emerald-100 bg-emerald-50 text-emerald-700"
-            : "border-rose-100 bg-rose-50 text-rose-700"
+            : "border-rose-100 bg-rose-50 text-rose-700 animate-shake"
         }`}>
           <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
           <span>{message}</span>
@@ -362,7 +365,7 @@ function Field({
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           required
-          className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3 pl-11 pr-4 text-sm font-medium text-slate-800 transition focus:bg-white placeholder:text-slate-300"
+          className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3 pl-11 pr-4 text-sm font-medium text-slate-800 transition focus:bg-white focus:border-indigo-500 placeholder:text-slate-400"
         />
       </div>
     </div>
@@ -395,19 +398,20 @@ function SelectField({
           value={value}
           onChange={(event) => onChange(event.target.value)}
           required
-          className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3 pl-11 pr-4 text-sm font-medium text-slate-800 transition focus:bg-white focus:ring-0 outline-none appearance-none"
+          className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-10 text-sm font-medium text-slate-800 transition focus:bg-white focus:border-indigo-500 outline-none appearance-none cursor-pointer truncate"
         >
-          <option value="">Select...</option>
+          <option value="">Select option...</option>
           {options.map((option) => (
             <option key={option} value={option}>
               {option}
             </option>
           ))}
         </select>
-        <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-slate-400 text-xs font-bold">
-          ▼
+        <div className="absolute inset-y-0 right-3.5 flex items-center pointer-events-none text-slate-400">
+          <ChevronDown className="h-4 w-4 shrink-0" />
         </div>
       </div>
     </div>
   );
 }
+
