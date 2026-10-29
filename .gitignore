@@ -21,3 +21,5 @@ frontend/.env.production.local
 Thumbs.db
 __pycache__/
 *.py[cod]
+uploads/
+backend/uploads/
