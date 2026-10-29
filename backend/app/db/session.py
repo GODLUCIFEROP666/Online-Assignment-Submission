@@ -26,7 +26,6 @@ class MongoDBManager:
             serverSelectionTimeoutMS=5000,
             connectTimeoutMS=5000,
             socketTimeoutMS=10000,
-            retryWrites=True,
         )
         self.db = self.client[db_name]
 
@@ -62,10 +61,6 @@ async def init_db() -> None:
             "CRITICAL ATLAS AUTH ISSUE: Detected placeholder angle brackets '<' or '>' in your MongoDB connection string! "
             "Please remove the '<' and '>' brackets around your username/password in Render environment variables."
         )
-    if diag.get("encoded_special_chars"):
-        logger.info("Automatically percent-encoded special characters in MongoDB password for RFC-3986 compliance.")
-    if diag.get("added_auth_source"):
-        logger.info("Automatically appended 'authSource=admin' to Atlas URI for proper authentication.")
 
     mongodb_manager.init_db(settings.effective_mongodb_uri, settings.mongodb_db_name)
 

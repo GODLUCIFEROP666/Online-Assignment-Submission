@@ -15,6 +15,9 @@ frontend/.env.production.local
 
 # Ignore environment files, logs, and system files
 .env
+.env.*.local
 *.log
 .DS_Store
 Thumbs.db
+__pycache__/
+*.py[cod]
