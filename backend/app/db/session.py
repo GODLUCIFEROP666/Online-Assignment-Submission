@@ -53,13 +53,35 @@ mongodb_manager = MongoDBManager()
 async def init_db() -> None:
     settings = get_settings()
     diag = settings.mongodb_diagnostics
-    logger.info("Initializing MongoDB connection target: %s", diag.get("masked_uri"))
+
+    logger.info(
+        "MongoDB Startup Diagnostics: selected_var=%s | scheme=%s | host=%s | path_db=%s | auth_source=%s | user_present=%s | pass_len=%s | placeholder_brackets=%s",
+        diag.get("selected_var"),
+        diag.get("scheme"),
+        diag.get("host"),
+        diag.get("database_path"),
+        diag.get("auth_source"),
+        diag.get("has_username"),
+        diag.get("password_length"),
+        diag.get("has_placeholder_brackets"),
+    )
+    if diag.get("other_configured_vars"):
+        logger.info("Other database env vars detected (ignored): %s", diag.get("other_configured_vars"))
+
     if diag.get("had_whitespace_or_quotes"):
-        logger.warning("Sanitized accidental leading/trailing quotes or whitespace from MongoDB URI.")
+        logger.warning("Sanitized accidental leading/trailing quotes or whitespace from %s.", diag.get("selected_var"))
+
     if diag.get("has_placeholder_brackets"):
         logger.error(
-            "CRITICAL ATLAS AUTH ISSUE: Detected placeholder angle brackets '<' or '>' in your MongoDB connection string! "
-            "Please remove the '<' and '>' brackets around your username/password in Render environment variables."
+            "CRITICAL ATLAS AUTH ISSUE: Detected placeholder angle brackets '<' or '>' in %s credentials! "
+            "Please remove the '<' and '>' brackets around your username/password in Render environment variables. "
+            "Example: mongodb+srv://myuser:mypassword123@... (NOT :<mypassword123>@)",
+            diag.get("selected_var"),
+        )
+
+    if diag.get("selected_var") == "fallback_localhost":
+        logger.warning(
+            "WARNING: Neither MONGODB_URI nor DATABASE_URL was set in environment. Falling back to localhost:27017."
         )
 
     mongodb_manager.init_db(settings.effective_mongodb_uri, settings.mongodb_db_name)

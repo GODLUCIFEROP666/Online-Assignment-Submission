@@ -38,27 +38,62 @@ class Settings(BaseSettings):
     max_upload_mb: int = 25
 
     @property
+    def configured_mongodb_vars(self) -> dict[str, str]:
+        candidates = {
+            "MONGODB_URI": self.mongodb_uri,
+            "DATABASE_URL": self.database_url,
+            "MONGO_URI": self.mongo_uri,
+            "MONGODB_URL": self.mongodb_url,
+        }
+        return {k: v.strip() for k, v in candidates.items() if v and v.strip()}
+
+    @property
+    def selected_mongodb_env_var(self) -> str:
+        # Priority order: MONGODB_URI -> DATABASE_URL -> MONGO_URI -> MONGODB_URL
+        for name in ["MONGODB_URI", "DATABASE_URL", "MONGO_URI", "MONGODB_URL"]:
+            val = getattr(self, name.lower(), None)
+            if val and val.strip():
+                cleaned = val.strip().strip("'\"").strip()
+                if cleaned.startswith("mongodb://") or cleaned.startswith("mongodb+srv://"):
+                    return name
+
+        # If none start with mongodb://, check if any is configured
+        for name in ["MONGODB_URI", "DATABASE_URL", "MONGO_URI", "MONGODB_URL"]:
+            val = getattr(self, name.lower(), None)
+            if val and val.strip():
+                return name
+
+        return "fallback_localhost"
+
+    @property
     def raw_mongodb_uri(self) -> str:
-        """
-        Check all standard environment variable names:
-        1. MONGODB_URI
-        2. DATABASE_URL (Render blueprint standard)
-        3. MONGO_URI
-        4. MONGODB_URL
-        """
-        for candidate in [self.mongodb_uri, self.database_url, self.mongo_uri, self.mongodb_url]:
-            if candidate and candidate.strip():
-                return candidate.strip()
+        selected = self.selected_mongodb_env_var
+        if selected != "fallback_localhost":
+            val = getattr(self, selected.lower(), None)
+            if val and val.strip():
+                return val.strip()
         return "mongodb://localhost:27017"
 
     @property
     def effective_mongodb_uri(self) -> str:
-        sanitized, _ = sanitize_and_normalize_mongodb_uri(self.raw_mongodb_uri, self.mongodb_db_name)
+        other_vars = [k for k in self.configured_mongodb_vars if k != self.selected_mongodb_env_var]
+        sanitized, _ = sanitize_and_normalize_mongodb_uri(
+            self.raw_mongodb_uri,
+            self.mongodb_db_name,
+            selected_var=self.selected_mongodb_env_var,
+            other_vars=other_vars,
+        )
         return sanitized
 
     @property
     def mongodb_diagnostics(self) -> dict[str, Any]:
-        _, diag = sanitize_and_normalize_mongodb_uri(self.raw_mongodb_uri, self.mongodb_db_name)
+        other_vars = [k for k in self.configured_mongodb_vars if k != self.selected_mongodb_env_var]
+        _, diag = sanitize_and_normalize_mongodb_uri(
+            self.raw_mongodb_uri,
+            self.mongodb_db_name,
+            selected_var=self.selected_mongodb_env_var,
+            other_vars=other_vars,
+        )
         return diag
 
     @property
