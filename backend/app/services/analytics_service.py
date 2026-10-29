@@ -1,6 +1,13 @@
 from __future__ import annotations
-import pandas as pd
+from typing import TYPE_CHECKING
 from app.analytics import ml_models
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+def _get_pandas():
+    import pandas as pd
+    return pd
 
 async def _assignment_rows(db) -> list[dict[str, object]]:
     # Get all users
@@ -43,7 +50,8 @@ async def _assignment_rows(db) -> list[dict[str, object]]:
     return rows
 
 
-async def _frame(db) -> pd.DataFrame:
+async def _frame(db):
+    pd = _get_pandas()
     rows = await _assignment_rows(db)
     return pd.DataFrame(rows)
 

@@ -83,13 +83,16 @@ async def complete_pending_registration(db, registration_id: int) -> dict | None
             return None
 
     # Check duplicates in users collection
-    existing = await db.users.find_one({
-        "$or": [
-            {"username": pending["username"]},
-            {"email": pending["email"]},
-            {"seat_no": pending["seat_no"]}
-        ]
-    })
+    existing = await db.users.find_one(
+        {
+            "$or": [
+                {"username": pending["username"]},
+                {"email": pending["email"]},
+                {"seat_no": pending["seat_no"]}
+            ]
+        },
+        projection={"_id": 1}
+    )
     if existing:
         return None
 

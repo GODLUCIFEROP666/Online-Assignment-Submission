@@ -144,6 +144,10 @@ def cluster_students(df):
     if df.empty:
         return []
 
+    pd = _get_pandas()
+    from sklearn.cluster import KMeans
+    from sklearn.preprocessing import StandardScaler
+
     df = df.copy()
     df["marks"] = pd.to_numeric(df["marks"], errors="coerce").fillna(0)
 
@@ -180,6 +184,7 @@ def identify_at_risk_students(df):
     if df.empty:
         return []
 
+    pd = _get_pandas()
     df = df.copy()
     df["marks"] = pd.to_numeric(df["marks"], errors="coerce").fillna(0)
 

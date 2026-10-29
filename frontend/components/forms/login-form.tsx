@@ -22,8 +22,10 @@ export function LoginForm({
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [coldStartNotice, setColdStartNotice] = useState(false);
 
   function fillDemo(usernameStr: string, passStr: string) {
+    if (loading) return;
     setIdentifier(usernameStr);
     setPassword(passStr);
     setMessage(`Filled credentials for '${usernameStr}'. Click 'Authenticate & Access' below.`);
@@ -31,13 +33,23 @@ export function LoginForm({
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading) return; // Prevent duplicate submissions
     setLoading(true);
+    setColdStartNotice(false);
     setMessage(null);
+
+    // If server takes longer than 3.5s, it is likely waking from Render free-tier cold sleep
+    const coldTimer = setTimeout(() => {
+      setColdStartNotice(true);
+    }, 3500);
+
     try {
       const payload = await apiFetch<LoginResponse>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ identifier, password })
       });
+      clearTimeout(coldTimer);
+      setColdStartNotice(false);
       setSession(payload.access_token, payload.role);
       setMessage(`Signed in as ${payload.role}. Redirecting...`);
       window.location.href =
@@ -47,6 +59,8 @@ export function LoginForm({
             ? "/superadmin"
             : "/teacher";
     } catch (error) {
+      clearTimeout(coldTimer);
+      setColdStartNotice(false);
       setMessage(error instanceof Error ? error.message : "Login failed");
     } finally {
       setLoading(false);
@@ -105,10 +119,11 @@ export function LoginForm({
           <input
             type="text"
             required
+            disabled={loading}
             placeholder="e.g. jignesh or admin"
             value={identifier}
             onChange={(event) => setIdentifier(event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-4 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white focus:border-indigo-500"
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-4 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white focus:border-indigo-500 disabled:opacity-60"
             autoComplete="username"
           />
         </div>
@@ -134,10 +149,11 @@ export function LoginForm({
           <input
             type={showPassword ? "text" : "password"}
             required
+            disabled={loading}
             placeholder="••••••••"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-12 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white focus:border-indigo-500"
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 py-3.5 pl-11 pr-12 text-sm font-medium text-slate-800 transition placeholder:text-slate-400 focus:bg-white focus:border-indigo-500 disabled:opacity-60"
             autoComplete="current-password"
           />
           <button
@@ -149,6 +165,14 @@ export function LoginForm({
           </button>
         </div>
       </div>
+
+      {/* Cold-start helpful notice */}
+      {loading && coldStartNotice ? (
+        <div className="flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50/90 p-3.5 text-xs font-medium text-amber-800 animate-fadeIn">
+          <Loader2 className="h-4 w-4 shrink-0 mt-0.5 animate-spin text-amber-600" />
+          <span>Waking up free cloud backend (first request can take ~30-50s on Render free tier). Please keep this window open...</span>
+        </div>
+      ) : null}
 
       {/* Message feedback card */}
       {message ? (
@@ -171,7 +195,7 @@ export function LoginForm({
         {loading ? (
           <>
             <Loader2 className="h-4 w-4 animate-spin" />
-            <span>Establishing Session...</span>
+            <span>{coldStartNotice ? "Waking Up Cloud Server..." : "Establishing Session..."}</span>
           </>
         ) : (
           <span>Authenticate &amp; Access</span>

@@ -1,53 +1,114 @@
+import asyncio
+import logging
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 
 from app.core.config import get_settings
 
+logger = logging.getLogger("app.db")
+
+
 class MongoDBManager:
     def __init__(self):
-        self.client = None
+        self.client: AsyncIOMotorClient | None = None
         self.db = None
 
-    def init_db(self, mongodb_uri: str, db_name: str):
-        self.client = AsyncIOMotorClient(mongodb_uri)
+    def init_db(self, mongodb_uri: str, db_name: str) -> None:
+        """
+        Initialize the shared AsyncIOMotorClient with tuned connection pooling
+        and resilient timeouts suited for MongoDB Atlas free tier (M0).
+        """
+        self.client = AsyncIOMotorClient(
+            mongodb_uri,
+            minPoolSize=1,
+            maxPoolSize=15,
+            maxIdleTimeMS=45000,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+            socketTimeoutMS=10000,
+            retryWrites=True,
+        )
         self.db = self.client[db_name]
 
-    def close_db(self):
+    def close_db(self) -> None:
         if self.client:
             self.client.close()
             self.client = None
             self.db = None
 
+    async def ping(self) -> bool:
+        """Lightweight database connectivity check."""
+        if self.client is None or self.db is None:
+            return False
+        try:
+            await self.client.admin.command("ping")
+            return True
+        except Exception as exc:
+            logger.warning("Database ping failed: %s", exc)
+            return False
+
+
 mongodb_manager = MongoDBManager()
+
 
 async def init_db() -> None:
     settings = get_settings()
-    mongodb_manager.init_db(settings.mongodb_uri, settings.mongodb_db_name)
-    
-    # Initialize indexes and sequence counter seed on startup
-    db = mongodb_manager.db
-    # Create required indexes
-    await db.users.create_index("username", unique=True)
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("seat_no", unique=True)
-    await db.admins.create_index("username", unique=True)
-    await db.admins.create_index("email", unique=True)
-    await db.assignments.create_index("user_id")
-    await db.assignments.create_index("status")
-    await db.colleges.create_index("name_normalized", unique=True)
-    await db.notifications.create_index("recipient_user_id")
-    await db.notifications.create_index("recipient_role")
-    await db.notifications.create_index("is_read")
-    await db.notifications.create_index("created_at")
-    await db.pending_registrations.create_index("username")
+    diag = settings.mongodb_diagnostics
+    logger.info("Initializing MongoDB connection target: %s", diag.get("masked_uri"))
+    if diag.get("had_whitespace_or_quotes"):
+        logger.warning("Sanitized accidental leading/trailing quotes or whitespace from MongoDB URI.")
+    if diag.get("has_placeholder_brackets"):
+        logger.error(
+            "CRITICAL ATLAS AUTH ISSUE: Detected placeholder angle brackets '<' or '>' in your MongoDB connection string! "
+            "Please remove the '<' and '>' brackets around your username/password in Render environment variables."
+        )
+    if diag.get("encoded_special_chars"):
+        logger.info("Automatically percent-encoded special characters in MongoDB password for RFC-3986 compliance.")
+    if diag.get("added_auth_source"):
+        logger.info("Automatically appended 'authSource=admin' to Atlas URI for proper authentication.")
+
+    mongodb_manager.init_db(settings.effective_mongodb_uri, settings.mongodb_db_name)
+
+
+async def ensure_database_indexes(db) -> None:
+    """
+    Ensure required MongoDB indexes in parallel using asyncio.gather
+    without blocking application startup or health check availability.
+    """
+    index_tasks = [
+        db.users.create_index("username", unique=True),
+        db.users.create_index("email", unique=True),
+        db.users.create_index("seat_no", unique=True),
+        db.admins.create_index("username", unique=True),
+        db.admins.create_index("email", unique=True),
+        db.assignments.create_index("user_id"),
+        db.assignments.create_index("status"),
+        db.colleges.create_index("name_normalized", unique=True),
+        db.notifications.create_index("recipient_user_id"),
+        db.notifications.create_index("recipient_role"),
+        db.notifications.create_index("is_read"),
+        db.notifications.create_index("created_at"),
+        db.pending_registrations.create_index("username"),
+        db.pending_registrations.create_index("id", unique=True),
+        db.pending_registrations.create_index("expires_at", expireAfterSeconds=0),
+    ]
+    results = await asyncio.gather(*index_tasks, return_exceptions=True)
+    failures = [r for r in results if isinstance(r, Exception)]
+    if failures:
+        logger.warning("Some database indexes could not be created: %s", failures)
+    else:
+        logger.info("All MongoDB indexes verified successfully in parallel.")
+
 
 async def close_db() -> None:
     mongodb_manager.close_db()
+
 
 async def get_mongodb_db():
     if mongodb_manager.db is None:
         raise RuntimeError("Database not initialized. Call init_db first.")
     return mongodb_manager.db
+
 
 async def get_next_sequence_value(db, sequence_name: str) -> int:
     """

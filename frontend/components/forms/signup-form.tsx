@@ -58,6 +58,7 @@ export function SignupForm() {
   const [serverPhoneOtp, setServerPhoneOtp] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [coldStartNotice, setColdStartNotice] = useState(false);
   const [emailVerified, setEmailVerified] = useState(false);
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [collegeOptions, setCollegeOptions] = useState<string[]>(["SDJ International College", "Navyug Science College", "VNSGU Department of ICT", "Sutex Bank College"]);
@@ -74,8 +75,15 @@ export function SignupForm() {
   }, []);
 
   async function startRegistration() {
+    if (loading) return; // Prevent duplicate submission
     setLoading(true);
+    setColdStartNotice(false);
     setMessage(null);
+
+    const coldTimer = setTimeout(() => {
+      setColdStartNotice(true);
+    }, 3500);
+
     try {
       const payload = await apiFetch<StartResponse>("/api/auth/register/start", {
         method: "POST",
@@ -91,11 +99,15 @@ export function SignupForm() {
           password 
         })
       });
+      clearTimeout(coldTimer);
+      setColdStartNotice(false);
       setRegistrationId(payload.registration_id);
       setServerEmailOtp(payload.email_otp);
       setServerPhoneOtp(payload.phone_otp);
       setMessage(payload.message);
     } catch (error) {
+      clearTimeout(coldTimer);
+      setColdStartNotice(false);
       setMessage(error instanceof Error ? error.message : "Registration start failed");
     } finally {
       setLoading(false);
@@ -191,13 +203,21 @@ export function SignupForm() {
             <SelectField label="Semester" value={sem} onChange={setSem} options={semesters} icon={<Sparkles className="h-4 w-4" />} />
           </div>
 
+          {/* Cold-start helpful notice */}
+          {loading && coldStartNotice ? (
+            <div className="flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50/90 p-3.5 text-xs font-medium text-amber-800 animate-fadeIn">
+              <Sparkles className="h-4 w-4 shrink-0 mt-0.5 animate-spin text-amber-600" />
+              <span>Waking up free cloud backend (first request can take ~30-50s on Render free tier). Please wait...</span>
+            </div>
+          ) : null}
+
           <button
             type="button"
             onClick={startRegistration}
             disabled={loading || !fullName || !username || !seatNo || !email || !phone || !password || !college || !course || !sem}
             className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-700 py-3.5 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition hover:from-indigo-700 hover:to-indigo-800 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
           >
-            <span>Initiate OTP Verification</span>
+            <span>{loading ? (coldStartNotice ? "Waking Up Cloud Server..." : "Initiating Verification...") : "Initiate OTP Verification"}</span>
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>

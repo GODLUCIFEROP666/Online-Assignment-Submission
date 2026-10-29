@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 
@@ -35,57 +36,77 @@ def _clear_refresh_cookie(response: Response) -> None:
 
 @router.post("/login", status_code=status.HTTP_200_OK)
 async def login(payload: LoginRequest, response: Response, db = Depends(get_mongodb_db)) -> dict[str, object]:
-    user = await db.users.find_one({
-        "$or": [
-            {"username": payload.identifier},
-            {"email": payload.identifier}
-        ]
-    })
+    user = await db.users.find_one(
+        {
+            "$or": [
+                {"username": payload.identifier},
+                {"email": payload.identifier}
+            ]
+        },
+        projection={"id": 1, "username": 1, "full_name": 1, "password": 1}
+    )
     
-    if user and verify_password(payload.password, user["password"]):
-        claims = {"role": "student", "user_id": user["id"], "username": user["username"]}
-        tokens = build_token_pair(str(user["id"]), claims)
-        _set_refresh_cookie(response, tokens["refresh_token"])
-        return {
-            "status": "success",
-            "role": "student",
-            "user": {"id": user["id"], "username": user["username"], "full_name": user["full_name"]},
-            "access_token": tokens["access_token"],
-        }
+    if user:
+        is_valid = await asyncio.to_thread(verify_password, payload.password, user["password"])
+        if is_valid:
+            claims = {"role": "student", "user_id": user["id"], "username": user["username"]}
+            tokens = build_token_pair(str(user["id"]), claims)
+            _set_refresh_cookie(response, tokens["refresh_token"])
+            return {
+                "status": "success",
+                "role": "student",
+                "user": {"id": user["id"], "username": user["username"], "full_name": user["full_name"]},
+                "access_token": tokens["access_token"],
+            }
 
-    admin = await db.admins.find_one({
-        "$or": [
-            {"username": payload.identifier},
-            {"email": payload.identifier}
-        ]
-    })
-    
-    if admin and verify_password(payload.password, admin["password"]):
-        claims = {
-            "role": admin["role"],
-            "admin_id": admin["id"],
-            "username": admin["username"],
-            "college": admin.get("college"),
-            "course": admin.get("course"),
-            "semester": admin.get("semester"),
-            "subject": admin.get("subject"),
+    admin = await db.admins.find_one(
+        {
+            "$or": [
+                {"username": payload.identifier},
+                {"email": payload.identifier}
+            ]
+        },
+        projection={
+            "id": 1,
+            "username": 1,
+            "name": 1,
+            "password": 1,
+            "role": 1,
+            "college": 1,
+            "course": 1,
+            "semester": 1,
+            "subject": 1,
         }
-        tokens = build_token_pair(str(admin["id"]), claims)
-        _set_refresh_cookie(response, tokens["refresh_token"])
-        return {
-            "status": "success",
-            "role": admin["role"],
-            "admin": {
-                "id": admin["id"],
+    )
+    
+    if admin:
+        is_valid = await asyncio.to_thread(verify_password, payload.password, admin["password"])
+        if is_valid:
+            claims = {
+                "role": admin["role"],
+                "admin_id": admin["id"],
                 "username": admin["username"],
-                "name": admin["name"],
                 "college": admin.get("college"),
                 "course": admin.get("course"),
                 "semester": admin.get("semester"),
                 "subject": admin.get("subject"),
-            },
-            "access_token": tokens["access_token"],
-        }
+            }
+            tokens = build_token_pair(str(admin["id"]), claims)
+            _set_refresh_cookie(response, tokens["refresh_token"])
+            return {
+                "status": "success",
+                "role": admin["role"],
+                "admin": {
+                    "id": admin["id"],
+                    "username": admin["username"],
+                    "name": admin["name"],
+                    "college": admin.get("college"),
+                    "course": admin.get("course"),
+                    "semester": admin.get("semester"),
+                    "subject": admin.get("subject"),
+                },
+                "access_token": tokens["access_token"],
+            }
 
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username/email or password")
@@ -121,13 +142,16 @@ async def logout(response: Response) -> dict[str, str]:
 
 @router.post("/register/start", status_code=status.HTTP_200_OK)
 async def register_start(payload: RegisterRequest, db = Depends(get_mongodb_db)) -> dict[str, object]:
-    existing_user = await db.users.find_one({
-        "$or": [
-            {"username": payload.username},
-            {"email": payload.email},
-            {"seat_no": payload.seat_no}
-        ]
-    })
+    existing_user = await db.users.find_one(
+        {
+            "$or": [
+                {"username": payload.username},
+                {"email": payload.email},
+                {"seat_no": payload.seat_no}
+            ]
+        },
+        projection={"_id": 1}
+    )
     
     if existing_user:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username, email, or seat number already exists")
@@ -219,7 +243,7 @@ async def password_reset(payload: PasswordResetConfirmRequest, db = Depends(get_
 
 @router.get("/username-available", status_code=status.HTTP_200_OK)
 async def username_available(username: str, db = Depends(get_mongodb_db)) -> dict[str, object]:
-    exists = await db.users.find_one({"username": username})
+    exists = await db.users.find_one({"username": username}, projection={"_id": 1})
     return {"status": "success", "available": exists is None, "username": username}
 
 
@@ -227,21 +251,14 @@ async def username_available(username: str, db = Depends(get_mongodb_db)) -> dic
 async def contact_available(email: str | None = None, phone: str | None = None, db = Depends(get_mongodb_db)) -> dict[str, object]:
     exists = None
     if email:
-        exists = await db.users.find_one({"email": email})
+        exists = await db.users.find_one({"email": email}, projection={"_id": 1})
     if not exists and phone:
-        exists = await db.users.find_one({"phone": phone})
+        exists = await db.users.find_one({"phone": phone}, projection={"_id": 1})
     return {"status": "success", "available": exists is None, "email": email, "phone": phone}
 
 
 @router.get("/colleges", status_code=status.HTTP_200_OK)
 async def list_colleges(db = Depends(get_mongodb_db)) -> dict[str, object]:
-    cursor = db.colleges.find().sort("name", 1)
+    cursor = db.colleges.find({}, projection={"id": 1, "name": 1, "_id": 0}).sort("name", 1)
     colleges = await cursor.to_list(length=None)
-    items = [
-        {
-            "id": college.get("id"),
-            "name": college.get("name"),
-        }
-        for college in colleges
-    ]
-    return {"status": "success", "items": items, "count": len(items)}
+    return {"status": "success", "items": colleges, "count": len(colleges)}

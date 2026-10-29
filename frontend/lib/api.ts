@@ -2,40 +2,74 @@ import { clearAuth, getAccessToken, setAccessToken } from "@/lib/auth";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-async function refreshSession() {
-  const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
-    method: "POST",
-    credentials: "include"
-  });
+const DEFAULT_TIMEOUT_MS = 60000; // 60 seconds gives Render free-tier cold starts time to wake up
 
-  if (!response.ok) {
+async function refreshSession() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+      method: "POST",
+      credentials: "include"
+    });
+
+    if (!response.ok) {
+      clearAuth();
+      return false;
+    }
+
+    const payload = (await response.json()) as { access_token?: string };
+    if (payload.access_token) {
+      setAccessToken(payload.access_token);
+      return true;
+    }
+
+    clearAuth();
+    return false;
+  } catch {
     clearAuth();
     return false;
   }
-
-  const payload = (await response.json()) as { access_token?: string };
-  if (payload.access_token) {
-    setAccessToken(payload.access_token);
-    return true;
-  }
-
-  clearAuth();
-  return false;
 }
 
 async function requestWithAuth(path: string, init?: RequestInit) {
   const token = getAccessToken();
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
-  return fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    cache: "no-store",
-    headers: {
-      ...(isFormData ? {} : { "Content-Type": "application/json" }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {})
-    },
-    credentials: "include"
-  });
+
+  let signal = init?.signal;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  // If no external signal is provided, enforce sensible 60-second cold-start timeout
+  if (!signal) {
+    const controller = new AbortController();
+    signal = controller.signal;
+    timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      signal,
+      cache: "no-store",
+      headers: {
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers ?? {})
+      },
+      credentials: "include"
+    });
+    return response;
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error("Server request timed out. The free cloud backend is taking longer than usual to wake up. Please wait a moment and try again.");
+    }
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      throw new Error("Unable to reach backend server. If the free server is waking up, please wait ~30-50s and retry.");
+    }
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -50,6 +84,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   if (!response.ok) {
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
+      throw new Error("The cloud server is currently waking up from idle sleep. Please wait a few seconds and try again.");
+    }
+
     let detail = `API request failed: ${response.status}`;
     try {
       const errorBody = await response.json();
@@ -97,7 +135,6 @@ export async function downloadApiFile(path: string, fallbackFilename: string) {
       response = await requestWithAuth(targetPath, { method: "GET" });
     }
   }
-
 
   if (!response.ok) {
     let detail = `API download failed: ${response.status}`;
