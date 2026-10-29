@@ -13,6 +13,8 @@ class TeacherCreateRequest(BaseModel):
     password: str = Field(min_length=8)
     college: str = Field(min_length=2)
     course: str = Field(min_length=2)
+    semester: str | None = None
+    subject: str | None = None
 
 
 class TeacherPasswordUpdateRequest(BaseModel):
@@ -25,6 +27,9 @@ class TeacherUpdateRequest(BaseModel):
     email: EmailStr
     college: str = Field(min_length=2)
     course: str = Field(min_length=2)
+    semester: str | None = None
+    subject: str | None = None
+
 
 
 class CollegeCreateRequest(BaseModel):

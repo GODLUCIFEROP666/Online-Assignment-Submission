@@ -66,16 +66,27 @@ async def login(payload: LoginRequest, response: Response, db = Depends(get_mong
             "admin_id": admin["id"],
             "username": admin["username"],
             "college": admin.get("college"),
-            "course": admin.get("course")
+            "course": admin.get("course"),
+            "semester": admin.get("semester"),
+            "subject": admin.get("subject"),
         }
         tokens = build_token_pair(str(admin["id"]), claims)
         _set_refresh_cookie(response, tokens["refresh_token"])
         return {
             "status": "success",
             "role": admin["role"],
-            "admin": {"id": admin["id"], "username": admin["username"], "name": admin["name"]},
+            "admin": {
+                "id": admin["id"],
+                "username": admin["username"],
+                "name": admin["name"],
+                "college": admin.get("college"),
+                "course": admin.get("course"),
+                "semester": admin.get("semester"),
+                "subject": admin.get("subject"),
+            },
             "access_token": tokens["access_token"],
         }
+
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username/email or password")
 

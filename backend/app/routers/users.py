@@ -80,8 +80,11 @@ async def read_me(claims: dict = Depends(get_current_claims), db = Depends(get_m
             "email": admin.get("email"),
             "college": admin.get("college"),
             "course": admin.get("course"),
+            "semester": admin.get("semester"),
+            "subject": admin.get("subject"),
         },
     }
+
 
 
 @router.put("/me", status_code=status.HTTP_200_OK)

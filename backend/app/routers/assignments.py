@@ -9,6 +9,8 @@ from app.schemas.assignments import AssignmentReview
 from app.services.assignment_scope import build_teacher_assignment_scope, combine_filters
 from app.services.file_service import gridfs_bucket, store_upload, uploads_dir
 from app.services.notification_service import create_notification
+from app.analytics.plagiarism import analyze_plagiarism
+from app.analytics.auto_grader import auto_grade_submission
 
 router = APIRouter()
 
@@ -227,12 +229,19 @@ async def create_assignment(
     submit_date = datetime.combine(date.today(), datetime.min.time())
     submit_time = datetime.now().replace(microsecond=0)
 
+    course_year = user.get("course_year") or ""
+    parts = course_year.split(" - ")
+    doc_course = parts[0].strip() if len(parts) >= 1 else course_year
+    doc_sem = parts[1].strip() if len(parts) >= 2 else ""
+
     assignment_doc = {
         "id": assignment_id,
         "user_id": user.get("id"),
         "student_name": user.get("full_name"),
         "college_name": user.get("college"),
         "year": user.get("course_year"),
+        "course": doc_course,
+        "semester": doc_sem,
         "seat_no": user.get("seat_no"),
         "subject": subject,
         "title": title,
@@ -262,6 +271,36 @@ async def create_assignment(
         entity_id=assignment_id,
     )
     return {"status": "success", "message": "Assignment submitted", "assignment": _assignment_payload(assignment_doc)}
+
+
+@router.get("/{assignment_id}", status_code=status.HTTP_200_OK)
+async def get_assignment_detail(
+    assignment_id: str,
+    claims: dict = Depends(get_current_claims),
+    db = Depends(get_mongodb_db),
+) -> dict[str, object]:
+    assignment = await find_assignment_by_id_or_objectid(db, assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
+
+    role = claims.get("role")
+    if role == "student":
+        student = await _current_student(db, claims)
+        if str(assignment.get("user_id")) != str(student.get("id")) and str(assignment.get("user_id")) != str(student.get("_id")) and assignment.get("seat_no") != student.get("seat_no"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only view your own assignments")
+    elif role == "teacher":
+        scope = await build_teacher_assignment_scope(db, claims)
+        if not scope or not await db.assignments.find_one({"_id": assignment["_id"], **scope}):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. Teachers can only view assignments matching their assigned Course, Semester, and Subject.",
+            )
+    elif role == "superadmin":
+        pass
+    else:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
+
+    return {"status": "success", "assignment": _assignment_payload(assignment)}
 
 
 @router.delete("/{assignment_id}", status_code=status.HTTP_200_OK)
@@ -313,10 +352,13 @@ async def review_assignment(
     if not assignment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
 
-    # Enforce the same teacher scope used by the listing query.
+    # Enforce strict Course, Semester, Subject teacher assignment scope
     scope = await build_teacher_assignment_scope(db, claims)
-    if scope and not await db.assignments.find_one({"_id": assignment["_id"], **scope}):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher can only review assignments from their assigned college")
+    if not scope or not await db.assignments.find_one({"_id": assignment["_id"], **scope}):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Teachers can only review assignments matching their assigned Course, Semester, and Subject.",
+        )
 
     normalized_status = payload.status
     if normalized_status == "Pending":
@@ -345,3 +387,139 @@ async def review_assignment(
             entity_id=assignment_id,
         )
     return {"status": "success", "message": "Assignment reviewed", "assignment": _assignment_payload(updated_assignment)}
+
+
+@router.get("/{assignment_id}/auto-grade", status_code=status.HTTP_200_OK)
+async def auto_grade_single(
+    assignment_id: str,
+    claims: dict = Depends(get_current_claims),
+    db = Depends(get_mongodb_db),
+) -> dict[str, object]:
+    """100% Free Local AI Auto-Grading recommendation for a submission."""
+    if claims.get("role") not in {"teacher", "superadmin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher access required")
+
+    assignment = await find_assignment_by_id_or_objectid(db, assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
+
+    content = assignment.get("details") or assignment.get("title") or ""
+
+    # Check peer plagiarism similarity score for this assignment
+    peer_cursor = db.assignments.find({"subject": assignment.get("subject")})
+    peer_docs = await peer_cursor.to_list(length=None)
+    
+    submissions_payload = [
+        {
+            "submission_id": str(d.get("id") or d.get("_id")),
+            "username": d.get("student_name") or str(d.get("user_id")),
+            "student_name": d.get("student_name"),
+            "content": d.get("details") or d.get("title") or "",
+        }
+        for d in peer_docs
+    ]
+    
+    plagiarism_report = analyze_plagiarism(submissions_payload)
+    
+    target_sub_id = str(assignment.get("id") or assignment.get("_id"))
+    sub_similarity = 0.0
+    for comp in plagiarism_report.get("pairwise_comparisons", []):
+        if comp["student1_id"] == target_sub_id or comp["student2_id"] == target_sub_id:
+            if comp["similarity_percentage"] > sub_similarity:
+                sub_similarity = comp["similarity_percentage"]
+
+    auto_res = auto_grade_submission(
+        submission_text=content,
+        assignment_title=assignment.get("title", ""),
+        plagiarism_similarity=sub_similarity,
+    )
+
+    return {
+        "status": "success",
+        "assignment_id": assignment_id,
+        "plagiarism_similarity": sub_similarity,
+        "recommendation": auto_res,
+    }
+
+
+@router.post("/batch-auto-grade", status_code=status.HTTP_200_OK)
+async def batch_auto_grade_pending(
+    claims: dict = Depends(get_current_claims),
+    db = Depends(get_mongodb_db),
+) -> dict[str, object]:
+    """Batch auto-grades pending submissions in the teacher's subject scope."""
+    if claims.get("role") != "teacher":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher access required")
+
+    admin = await _current_admin(db, claims)
+    scope = await build_teacher_assignment_scope(db, claims)
+    if not scope:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No assigned scope for teacher")
+
+    query = combine_filters([scope, {"status": "Pending"}])
+    pending_assignments = await db.assignments.find(query).to_list(length=None)
+
+    if not pending_assignments:
+        return {"status": "success", "message": "No pending assignments to auto-grade", "count": 0}
+
+    graded_count = 0
+    for assignment in pending_assignments:
+        content = assignment.get("details") or assignment.get("title") or ""
+        auto_res = auto_grade_submission(submission_text=content, assignment_title=assignment.get("title", ""))
+        
+        ass_id = assignment.get("id") or str(assignment.get("_id"))
+        update_doc = {
+            "status": "Checked",
+            "marks": auto_res["suggested_marks"],
+            "teacher_note": f"[Auto-Graded] {auto_res['suggested_feedback']}",
+            "graded_by": admin.get("username"),
+            "graded_at": datetime.utcnow(),
+        }
+        await db.assignments.update_one({"_id": assignment["_id"]}, {"$set": update_doc})
+        graded_count += 1
+
+        if assignment.get("user_id"):
+            await create_notification(
+                db,
+                recipient_user_id=assignment.get("user_id"),
+                title="Assignment auto-graded",
+                body=f"Your assignment '{assignment.get('title')}' was graded ({auto_res['suggested_marks']} marks).",
+                category="assignment",
+                entity_type="assignment",
+                entity_id=str(ass_id),
+            )
+
+    return {
+        "status": "success",
+        "message": f"Successfully auto-graded {graded_count} pending assignment(s).",
+        "count": graded_count,
+    }
+
+
+@router.get("/plagiarism-scan/{subject_name}", status_code=status.HTTP_200_OK)
+async def scan_subject_plagiarism(
+    subject_name: str,
+    claims: dict = Depends(get_current_claims),
+    db = Depends(get_mongodb_db),
+) -> dict[str, object]:
+    """100% Free Local Plagiarism scan for all submissions in a subject."""
+    if claims.get("role") not in {"teacher", "superadmin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher or Superadmin access required")
+
+    cursor = db.assignments.find({"subject": subject_name})
+    assignments = await cursor.to_list(length=None)
+
+    submissions_payload = [
+        {
+            "submission_id": str(d.get("id") or d.get("_id")),
+            "username": d.get("seat_no") or d.get("student_name") or str(d.get("user_id")),
+            "student_name": d.get("student_name"),
+            "content": d.get("details") or d.get("title") or "",
+        }
+        for d in assignments
+    ]
+
+    report = analyze_plagiarism(submissions_payload)
+    return {"status": "success", "subject": subject_name, "report": report}
+
+

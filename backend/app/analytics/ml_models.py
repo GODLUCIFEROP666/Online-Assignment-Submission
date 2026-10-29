@@ -1,14 +1,18 @@
-import numpy as np
-import pandas as pd
-from sklearn.cluster import KMeans
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
+# Lazy-loaded dependencies for fast cold starts
+def _get_pandas():
+    import pandas as pd
+    return pd
+
+def _get_numpy():
+    import numpy as np
+    return np
 
 
 def analyze_student(df, username):
     """
     Perform deep analysis on a single student's performance.
     """
+    pd = _get_pandas()
     if df.empty:
         return {"error": "No data found for this student"}
 
@@ -59,6 +63,7 @@ def analyze_teacher(df, username):
     """
     Perform deep analysis on a teacher's performance (grading speed, average marks given).
     """
+    pd = _get_pandas()
     if df.empty:
         return {"error": "No data found"}
 
@@ -104,6 +109,10 @@ def predict_performance(df):
     """
     if df.empty:
         return []
+
+    pd = _get_pandas()
+    np = _get_numpy()
+    from sklearn.ensemble import RandomForestClassifier
 
     df = df.copy()
     df["marks"] = pd.to_numeric(df["marks"], errors="coerce").fillna(0)
@@ -161,3 +170,54 @@ def cluster_students(df):
         student_stats.drop(columns=["raw_cluster"], inplace=True)
 
     return student_stats.to_dict("records")
+
+
+def identify_at_risk_students(df):
+    """
+    Identify students at risk based on low average marks (< 50%),
+    declining trend, or low submission completion rate.
+    """
+    if df.empty:
+        return []
+
+    df = df.copy()
+    df["marks"] = pd.to_numeric(df["marks"], errors="coerce").fillna(0)
+
+    student_stats = df.groupby(["student_id", "username", "full_name"], dropna=False).agg(
+        total_assignments=("assignment_id", "count"),
+        avg_marks=("marks", "mean"),
+        min_marks=("marks", "min"),
+        pending_count=("status", lambda s: (s.str.lower() == "pending").sum()),
+    ).reset_index()
+
+    at_risk_list = []
+    for _, row in student_stats.iterrows():
+        reasons = []
+        risk_level = "low"
+        
+        if row["avg_marks"] < 50:
+            reasons.append("Average marks below 50%")
+            risk_level = "high"
+        elif row["avg_marks"] < 65:
+            reasons.append("Borderline average marks (50-65%)")
+            risk_level = "medium"
+
+        if row["pending_count"] >= 2:
+            reasons.append(f"{row['pending_count']} pending ungraded/overdue assignments")
+            if risk_level == "low":
+                risk_level = "medium"
+
+        if reasons:
+            at_risk_list.append({
+                "student_id": row["student_id"],
+                "username": row["username"],
+                "full_name": row["full_name"] or row["username"],
+                "total_assignments": int(row["total_assignments"]),
+                "avg_marks": round(float(row["avg_marks"]), 1),
+                "risk_level": risk_level,
+                "reasons": reasons,
+            })
+
+    at_risk_list.sort(key=lambda x: (0 if x["risk_level"] == "high" else 1, x["avg_marks"]))
+    return at_risk_list
+

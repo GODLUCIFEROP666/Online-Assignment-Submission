@@ -89,12 +89,21 @@ async def load_stored_file(db, *, file_name: str | None = None, gridfs_id: Any |
             pass
 
     if file_name:
-        file_path = uploads_dir() / Path(file_name).name
-        if file_path.exists():
-            return {
-                "content": file_path.read_bytes(),
-                "filename": file_path.name,
-                "content_type": guess_media_type(file_path.name),
-            }
+        clean_name = Path(file_name).name
+        candidates = [
+            uploads_dir() / clean_name,
+            Path("uploads") / clean_name,
+            Path("./uploads") / clean_name,
+            Path("../uploads") / clean_name,
+            Path("./FINAL2/uploads") / clean_name,
+        ]
+        for path_obj in candidates:
+            if path_obj.exists() and path_obj.is_file():
+                return {
+                    "content": path_obj.read_bytes(),
+                    "filename": path_obj.name,
+                    "content_type": guess_media_type(path_obj.name),
+                }
 
     return None
+

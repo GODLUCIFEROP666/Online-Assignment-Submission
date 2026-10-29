@@ -79,7 +79,11 @@ async def overview(claims: dict = Depends(get_current_claims), db = Depends(get_
 
     user_query: dict[str, object] = {}
     teacher_query: dict[str, object] = {"role": "teacher"}
+    assignment_query: dict[str, object] = {}
+
     if role == "teacher":
+        from app.services.assignment_scope import build_teacher_assignment_scope, combine_filters
+        assignment_query = await build_teacher_assignment_scope(db, claims)
         if college:
             user_query["college"] = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
             teacher_query["college"] = {"$regex": f"^{re.escape(college)}$", "$options": "i"}
@@ -89,10 +93,19 @@ async def overview(claims: dict = Depends(get_current_claims), db = Depends(get_
 
     user_count = await db.users.count_documents(user_query if role == "teacher" else {})
     teacher_count = await db.admins.count_documents(teacher_query if role == "teacher" else {"role": "teacher"})
-    assignment_count = await db.assignments.count_documents({})
-    pending_count = await db.assignments.count_documents({"status": "Pending"})
-    checked_count = await db.assignments.count_documents({"status": "Checked"})
-    rejected_count = await db.assignments.count_documents({"status": "Rejected"})
+    
+    if role == "teacher":
+        from app.services.assignment_scope import combine_filters
+        assignment_count = await db.assignments.count_documents(assignment_query)
+        pending_count = await db.assignments.count_documents(combine_filters([assignment_query, {"status": "Pending"}]))
+        checked_count = await db.assignments.count_documents(combine_filters([assignment_query, {"status": "Checked"}]))
+        rejected_count = await db.assignments.count_documents(combine_filters([assignment_query, {"status": "Rejected"}]))
+    else:
+        assignment_count = await db.assignments.count_documents({})
+        pending_count = await db.assignments.count_documents({"status": "Pending"})
+        checked_count = await db.assignments.count_documents({"status": "Checked"})
+        rejected_count = await db.assignments.count_documents({"status": "Rejected"})
+
     college_count = await db.colleges.count_documents({}) if role == "superadmin" else 0
     return {
         "status": "success",
@@ -153,6 +166,8 @@ async def teachers(claims: dict = Depends(get_current_claims), db = Depends(get_
             "role": admin.get("role"),
             "college": admin.get("college"),
             "course": admin.get("course"),
+            "semester": admin.get("semester"),
+            "subject": admin.get("subject"),
         }
         for admin in admins
     ]
@@ -180,6 +195,8 @@ async def create_teacher(
         "role": "teacher",
         "college": payload.college,
         "course": payload.course,
+        "semester": payload.semester,
+        "subject": payload.subject,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow(),
     }
@@ -195,6 +212,8 @@ async def create_teacher(
             "role": admin.get("role"),
             "college": admin.get("college"),
             "course": admin.get("course"),
+            "semester": admin.get("semester"),
+            "subject": admin.get("subject"),
         },
     }
 
@@ -243,6 +262,8 @@ async def update_teacher(
                 "email": payload.email,
                 "college": payload.college,
                 "course": payload.course,
+                "semester": payload.semester,
+                "subject": payload.subject,
                 "updated_at": datetime.utcnow(),
             }
         },
@@ -259,8 +280,11 @@ async def update_teacher(
             "role": updated.get("role"),
             "college": updated.get("college"),
             "course": updated.get("course"),
+            "semester": updated.get("semester"),
+            "subject": updated.get("subject"),
         },
     }
+
 
 
 @router.delete("/teachers/{teacher_id}", status_code=status.HTTP_200_OK)
@@ -284,6 +308,22 @@ async def reset_teacher_password(
     claims: dict = Depends(get_current_claims),
     db = Depends(get_mongodb_db),
 ) -> dict[str, object]:
+    _require_superadmin(claims)
+    teacher = await find_admin_by_id_or_objectid(db, teacher_id)
+    if not teacher or teacher.get("role") != "teacher":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher not found")
+    await db.admins.update_one({"_id": teacher["_id"]}, {"$set": {"password": hash_password(payload.new_password)}})
+    return {"status": "success", "message": "Teacher password updated"}
+
+
+@router.post("/teachers/{teacher_id}/reset-password", status_code=status.HTTP_200_OK)
+async def reset_teacher_password_alias(
+    teacher_id: str,
+    payload: TeacherPasswordUpdateRequest,
+    claims: dict = Depends(get_current_claims),
+    db = Depends(get_mongodb_db),
+) -> dict[str, object]:
+    """Alias endpoint for frontend compatibility (POST /reset-password maps to PATCH /password)."""
     _require_superadmin(claims)
     teacher = await find_admin_by_id_or_objectid(db, teacher_id)
     if not teacher or teacher.get("role") != "teacher":
@@ -386,9 +426,44 @@ async def delete_college(
 
 
 @router.get("/assignments", status_code=status.HTTP_200_OK)
-async def assignments(claims: dict = Depends(get_current_claims), db = Depends(get_mongodb_db)) -> dict[str, object]:
-    _require_admin(claims)
-    cursor = db.assignments.find({}).sort([("submit_date", -1), ("submit_time", -1), ("id", -1)])
+async def assignments(
+    claims: dict = Depends(get_current_claims),
+    course: str | None = None,
+    semester: str | None = None,
+    subject: str | None = None,
+    teacher: str | None = None,
+    status_filter: str | None = None,
+    db = Depends(get_mongodb_db),
+) -> dict[str, object]:
+    role = claims.get("role")
+    if role not in {"teacher", "superadmin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    filters: list[dict[str, object]] = []
+
+    # Security: teachers may only see assignments within their strict scope
+    if role == "teacher":
+        from app.services.assignment_scope import build_teacher_assignment_scope
+        teacher_scope = await build_teacher_assignment_scope(db, claims)
+        if teacher_scope:
+            filters.append(teacher_scope)
+
+    if course:
+        filters.append({"$or": [{"course": {"$regex": f"^{re.escape(course)}$", "$options": "i"}}, {"year": {"$regex": f"^{re.escape(course)}", "$options": "i"}}]})
+    if semester:
+        sem_digits = re.search(r"\d+", semester)
+        sem_num = sem_digits.group(0) if sem_digits else semester
+        filters.append({"$or": [{"semester": {"$regex": f".*{re.escape(sem_num)}.*", "$options": "i"}}, {"year": {"$regex": f".*{re.escape(sem_num)}.*", "$options": "i"}}]})
+    if subject:
+        filters.append({"subject": {"$regex": f"^{re.escape(subject)}$", "$options": "i"}})
+    if teacher:
+        filters.append({"graded_by": {"$regex": f"^{re.escape(teacher)}$", "$options": "i"}})
+    if status_filter:
+        filters.append({"status": status_filter})
+
+    from app.services.assignment_scope import combine_filters
+    query = combine_filters(filters)
+    cursor = db.assignments.find(query).sort([("submit_date", -1), ("submit_time", -1), ("id", -1)])
     assignments_list = await cursor.to_list(length=None)
     items = []
     for assignment in assignments_list:
@@ -405,6 +480,8 @@ async def assignments(claims: dict = Depends(get_current_claims), db = Depends(g
             "student_name": assignment.get("student_name"),
             "college_name": assignment.get("college_name"),
             "year": assignment.get("year"),
+            "course": assignment.get("course"),
+            "semester": assignment.get("semester"),
             "seat_no": assignment.get("seat_no"),
             "subject": assignment.get("subject"),
             "title": assignment.get("title"),
@@ -418,6 +495,7 @@ async def assignments(claims: dict = Depends(get_current_claims), db = Depends(g
             "graded_at": graded_at_str,
         })
     return {"status": "success", "items": items, "count": len(items)}
+
 
 
 @router.get("/export/students.csv", status_code=status.HTTP_200_OK)

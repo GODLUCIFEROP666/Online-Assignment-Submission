@@ -119,6 +119,8 @@ async def ensure_demo_admin(db) -> dict:
                 "role": "teacher",
                 "college": "SDJ International College",
                 "course": "BCA",
+                "semester": "Sem 1",
+                "subject": "C Programming",
                 "updated_at": datetime.now(timezone.utc),
             }}
         )
@@ -136,12 +138,15 @@ async def ensure_demo_admin(db) -> dict:
         "role": "teacher",
         "college": "SDJ International College",
         "course": "BCA",
+        "semester": "Sem 1",
+        "subject": "C Programming",
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
     }
     await db.admins.insert_one(admin)
     print("[SEED] -> Permanent demo admin 'admin' (admin.demo@gmail.com, role: teacher) successfully seeded into MongoDB.")
     return admin
+
 
 
 async def ensure_demo_superadmin(db) -> dict:

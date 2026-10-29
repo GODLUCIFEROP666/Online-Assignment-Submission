@@ -104,6 +104,11 @@ async def teacher_analytics(db, username: str) -> dict[str, object]:
     return {"status": "success", "data": ml_models.analyze_teacher(frame, username)}
 
 
+async def at_risk_analytics(db, college: str | None = None, course: str | None = None, subject: str | None = None) -> dict[str, object]:
+    frame = await _filtered_frame(db, college=college, course=course, subject=subject)
+    return {"status": "success", "data": ml_models.identify_at_risk_students(frame)}
+
+
 def analytics_module_ready() -> dict[str, object]:
     return {
         "status": "ready",
@@ -113,5 +118,7 @@ def analytics_module_ready() -> dict[str, object]:
             "cluster_students",
             "analyze_student",
             "analyze_teacher",
+            "identify_at_risk_students",
         ],
     }
+

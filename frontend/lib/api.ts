@@ -84,13 +84,20 @@ function inferDownloadFilename(contentDisposition: string | null, fallback: stri
 }
 
 export async function downloadApiFile(path: string, fallbackFilename: string) {
-  let response = await requestWithAuth(path, { method: "GET" });
+  const targetPath = path.startsWith("/api/")
+    ? path
+    : path.startsWith("/")
+    ? `/api/files${path}`
+    : `/api/files/${path}`;
+
+  let response = await requestWithAuth(targetPath, { method: "GET" });
   if (response.status === 401) {
     const refreshed = await refreshSession();
     if (refreshed) {
-      response = await requestWithAuth(path, { method: "GET" });
+      response = await requestWithAuth(targetPath, { method: "GET" });
     }
   }
+
 
   if (!response.ok) {
     let detail = `API download failed: ${response.status}`;

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { AdminAnalyticsGrid } from "@/components/charts/admin-analytics-grid";
 import { AppShell } from "@/components/shell";
 import { apiFetch, downloadApiFile } from "@/lib/api";
-import { adminNav, assignmentStatuses } from "@/lib/constants";
+import { teacherNav, assignmentStatuses } from "@/lib/constants";
 import { useLiveRefresh } from "@/hooks/use-live-refresh";
 import { 
   FileDown, 
@@ -22,8 +22,13 @@ import {
   AlertCircle,
   FileText,
   Bookmark,
-  Pencil
+  Pencil,
+  ShieldAlert,
+  Wand2
 } from "lucide-react";
+import PlagiarismModal, { PlagiarismReportData } from "@/components/PlagiarismModal";
+import AutoGradePanel, { AutoGradeRecommendation } from "@/components/AutoGradePanel";
+
 
 type OverviewResponse = {
   status: string;
@@ -106,15 +111,90 @@ export default function TeacherDashboardPage() {
   const [savingId, setSavingId] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [editingIds, setEditingIds] = useState<Set<number>>(new Set());
+  const [teacherScope, setTeacherScope] = useState<{ college?: string; course?: string; semester?: string; subject?: string }>({});
+
+  // Quick Filter & Search States
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterTab, setFilterTab] = useState<"ALL" | "PENDING" | "CHECKED" | "REJECTED" | "HIGH_PLAGIARISM">("ALL");
+
+  // 100% Free Local AI & Plagiarism States
+  const [plagiarismModalOpen, setPlagiarismModalOpen] = useState(false);
+  const [plagiarismLoading, setPlagiarismLoading] = useState(false);
+  const [plagiarismData, setPlagiarismData] = useState<PlagiarismReportData | null>(null);
+  const [plagiarismSubject, setPlagiarismSubject] = useState("");
+
+
+  const [autoGradeRecs, setAutoGradeRecs] = useState<Record<number, AutoGradeRecommendation>>({});
+  const [autoGradeLoadingId, setAutoGradeLoadingId] = useState<number | null>(null);
+  const [batchAutoGradeLoading, setBatchAutoGradeLoading] = useState(false);
+
+  async function handlePlagiarismScan(subject: string) {
+    if (!subject) return;
+    setPlagiarismSubject(subject);
+    setPlagiarismModalOpen(true);
+    setPlagiarismLoading(true);
+    try {
+      const res = await apiFetch<{ status: string; report: PlagiarismReportData }>(`/api/assignments/plagiarism-scan/${encodeURIComponent(subject)}`);
+      setPlagiarismData(res.report);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Plagiarism scan failed");
+    } finally {
+      setPlagiarismLoading(false);
+    }
+  }
+
+  async function handleFetchAutoGrade(assignmentId: number) {
+    setAutoGradeLoadingId(assignmentId);
+    try {
+      const res = await apiFetch<{ status: string; recommendation: AutoGradeRecommendation }>(`/api/assignments/${assignmentId}/auto-grade`);
+      setAutoGradeRecs((prev) => ({ ...prev, [assignmentId]: res.recommendation }));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "AI Auto-grading failed");
+    } finally {
+      setAutoGradeLoadingId(null);
+    }
+  }
+
+  async function handleBatchAutoGrade() {
+    setBatchAutoGradeLoading(true);
+    setMessage(null);
+    try {
+      const res = await apiFetch<{ status: string; message: string; count: number }>("/api/assignments/batch-auto-grade", {
+        method: "POST"
+      });
+      setMessage(res.message);
+      // Refresh assignments
+      const assignmentPayload = await apiFetch<AssignmentListResponse>("/api/assignments/");
+      setItems(assignmentPayload.items);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Batch auto-grading failed");
+    } finally {
+      setBatchAutoGradeLoading(false);
+    }
+  }
 
   useLiveRefresh(async () => {
     try {
-      const [overviewPayload, assignmentPayload, analyticsPayload, studentPayload] = await Promise.all([
+      const [overviewPayload, assignmentPayload, analyticsPayload, studentPayload, mePayload] = await Promise.all([
         apiFetch<OverviewResponse>("/api/admin/overview"),
-        apiFetch<AssignmentListResponse>("/api/admin/assignments"),
+        apiFetch<AssignmentListResponse>("/api/assignments/"),
         apiFetch<AnalyticsResponse>("/api/analytics/dashboard"),
-        apiFetch<StudentListResponse>("/api/admin/students")
+        apiFetch<StudentListResponse>("/api/admin/students"),
+        apiFetch<{ status: string; data: { college?: string; course?: string; semester?: string; subject?: string } }>("/api/me").catch(() => null)
       ]);
+
+      if (mePayload?.data) {
+        setTeacherScope({
+          college: mePayload.data.college,
+          course: mePayload.data.course,
+          semester: mePayload.data.semester,
+          subject: mePayload.data.subject,
+        });
+        try {
+          const existing = JSON.parse(localStorage.getItem("admin") || "{}");
+          localStorage.setItem("admin", JSON.stringify({ ...existing, ...mePayload.data }));
+        } catch {}
+      }
 
       setOverview(overviewPayload.data);
       setItems(assignmentPayload.items);
@@ -136,6 +216,26 @@ export default function TeacherDashboardPage() {
       setMessage(error instanceof Error ? error.message : "Failed to load teacher dashboard");
     }
   });
+
+  const filteredAssignments = items.filter((item) => {
+    // Search query check
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const matchName = (item.student_name || "").toLowerCase().includes(q);
+      const matchTitle = (item.title || "").toLowerCase().includes(q);
+      const matchSubject = (item.subject || "").toLowerCase().includes(q);
+      if (!matchName && !matchTitle && !matchSubject) return false;
+    }
+
+    // Filter tab check
+    if (filterTab === "PENDING") return item.status === "Pending" || !item.status;
+    if (filterTab === "CHECKED") return item.status === "Checked";
+    if (filterTab === "REJECTED") return item.status === "Rejected";
+
+    return true;
+  });
+
+
 
   async function saveReview(item: AssignmentItem) {
     const draft = drafts[item.id];
@@ -176,11 +276,50 @@ export default function TeacherDashboardPage() {
 
   return (
     <AppShell 
-      title="Teacher Dashboard" 
-      subtitle="Complete student assignments reviews, input grades, leave feedback remarks, and download practical submissions." 
-      nav={adminNav}
+      title="My Assigned Academic Scope" 
+      subtitle="Review and grade assignments strictly within your assigned Course, Semester, and Subject mapping." 
+      nav={teacherNav}
     >
       <div className="space-y-6">
+
+        {/* Active Academic Scope Banner */}
+        <div className={`rounded-3xl border p-5 shadow-sm flex flex-wrap items-center justify-between gap-4 transition-all ${
+          teacherScope.course && teacherScope.semester && teacherScope.subject
+            ? "border-indigo-100 bg-gradient-to-r from-indigo-50/80 via-white to-indigo-50/40"
+            : "border-rose-200 bg-rose-50/60 text-rose-800"
+        }`}>
+          <div className="flex items-center gap-3.5">
+            <div className={`flex h-12 w-12 items-center justify-center rounded-2xl text-white shadow-md ${
+              teacherScope.course && teacherScope.semester && teacherScope.subject
+                ? "bg-indigo-600 shadow-indigo-600/20"
+                : "bg-rose-600 shadow-rose-600/20 animate-pulse"
+            }`}>
+              <GraduationCap className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+                <span>Assigned Academic Mapping</span>
+              </div>
+              <h2 className="text-base sm:text-lg font-extrabold text-slate-800 tracking-tight mt-0.5">
+                {teacherScope.course && teacherScope.semester && teacherScope.subject ? (
+                  <>
+                    Showing assignments for: <span className="text-indigo-600 font-black">{teacherScope.course}</span> • <span className="text-indigo-600 font-black">{teacherScope.semester}</span> • <span className="text-indigo-600 font-black">{teacherScope.subject}</span>
+                  </>
+                ) : (
+                  <span className="text-rose-700 font-extrabold">Unmapped Teacher Scope — Contact Administrator to Assign Course, Semester, & Subject</span>
+                )}
+              </h2>
+            </div>
+          </div>
+          {teacherScope.college && (
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-sm flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-indigo-500" />
+              <span>{teacherScope.college}</span>
+            </div>
+          )}
+        </div>
+
         
         {/* Statistics Panels Grid — sm:2col → md:3col → xl:5col to avoid orphan cards */}
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
@@ -216,20 +355,8 @@ export default function TeacherDashboardPage() {
           />
         </div>
 
-        {/* Analytics Charts Component wrapper */}
         <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-2 pb-4 mb-4 border-b border-slate-100">
-            <GraduationCap className="h-5 w-5 text-indigo-500" />
-            <span className="text-sm font-extrabold text-slate-800 tracking-tight">Active Analytics Overview</span>
-          </div>
-          <AdminAnalyticsGrid 
-            assignments={items} 
-            predictions={analytics?.predictions ?? []} 
-            clusters={analytics?.clusters ?? []} 
-        />
-      </div>
 
-        <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
             <div>
               <h3 className="text-lg font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
@@ -298,21 +425,85 @@ export default function TeacherDashboardPage() {
             </h3>
             <p className="mt-1 text-sm text-slate-500">Provide scores, change status tags, and document qualitative feedback.</p>
           </div>
-          <div className="rounded-full bg-indigo-50 border border-indigo-100 px-3.5 py-1 text-xs font-bold text-indigo-600 flex items-center gap-1">
-            <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
-            <span>Interactive grading panel</span>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            {teacherScope.subject && (
+              <button
+                type="button"
+                onClick={() => handlePlagiarismScan(teacherScope.subject!)}
+                className="rounded-full bg-amber-50 border border-amber-200 hover:bg-amber-100 px-3.5 py-1 text-xs font-bold text-amber-700 flex items-center gap-1.5 transition shadow-sm"
+              >
+                <ShieldAlert className="h-3.5 w-3.5 text-amber-600" />
+                <span>Scan Plagiarism</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleBatchAutoGrade}
+              disabled={batchAutoGradeLoading}
+              className="rounded-full bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1 text-xs font-bold flex items-center gap-1.5 transition shadow-sm disabled:opacity-60"
+            >
+              {batchAutoGradeLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Wand2 className="h-3.5 w-3.5" />
+              )}
+              <span>Batch Auto-Grade Pending</span>
+            </button>
           </div>
         </div>
 
+        {/* Search Bar & Quick Filter Tabs Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50/80 border border-slate-200/80 p-3 rounded-2xl">
+          {/* Quick Filter Tabs */}
+          <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-xs">
+            {(["ALL", "PENDING", "CHECKED", "REJECTED"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setFilterTab(tab)}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition ${
+                  filterTab === tab
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {tab === "ALL"
+                  ? `All (${items.length})`
+                  : tab === "PENDING"
+                  ? `Pending (${items.filter((i) => i.status === "Pending" || !i.status).length})`
+                  : tab === "CHECKED"
+                  ? `Checked (${items.filter((i) => i.status === "Checked").length})`
+                  : `Rejected (${items.filter((i) => i.status === "Rejected").length})`}
+              </button>
+            ))}
+          </div>
+
+          {/* Search Box */}
+          <div className="relative min-w-[240px] flex-1 max-w-sm">
+            <input
+              type="text"
+              placeholder="Search by student, title, or subject..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-white border border-slate-200 text-xs font-medium text-slate-800 rounded-xl px-3.5 py-2 outline-none focus:border-indigo-500 shadow-xs"
+            />
+          </div>
+        </div>
+
+
+
         {/* Grading List Queue */}
         <div className="space-y-6">
-          {items.length === 0 ? (
+          {filteredAssignments.length === 0 ? (
             <div className="rounded-3xl border border-slate-100 bg-white p-8 text-center text-slate-400 font-semibold flex flex-col items-center gap-2">
               <FileText className="h-10 w-10 text-slate-300 stroke-1" />
-              <span>No submitted assignments currently queued.</span>
+              <span>No submitted assignments found matching your filter criteria.</span>
             </div>
           ) : (
-            items.map((item) => {
+            filteredAssignments.map((item) => {
+
               const draft = drafts[item.id] ?? {
                 status: item.status === "Pending" || !item.status ? "Checked" : item.status,
                 marks: String(item.marks ?? 0),
@@ -349,16 +540,15 @@ export default function TeacherDashboardPage() {
                         <span>Marks: {item.marks ?? 0}</span>
                       </span>
                       
-                      {item.file_name ? (
-                        <button
-                          type="button"
-                          onClick={() => downloadAssignment(item).catch((error) => setMessage(error instanceof Error ? error.message : "Download failed"))}
-                          className="flex items-center gap-1 rounded-full bg-slate-950 px-3.5 py-1 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition"
-                        >
-                          <FileDown className="h-3.5 w-3.5" />
-                          <span>Retrieve File</span>
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => downloadAssignment(item).catch((error) => setMessage(error instanceof Error ? error.message : "Download failed"))}
+                        className="flex items-center gap-1 rounded-full bg-slate-950 px-3.5 py-1 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition"
+                      >
+                        <FileDown className="h-3.5 w-3.5" />
+                        <span>Retrieve File</span>
+                      </button>
+
                     </div>
                   </div>
 
@@ -441,6 +631,46 @@ export default function TeacherDashboardPage() {
 
                       return (
                         <div className="space-y-4 rounded-2xl border border-slate-100 p-5 bg-white shadow-sm">
+                          
+                          {/* AI Auto-Grader Assistant Launcher */}
+                          <div className="flex items-center justify-between bg-indigo-50/60 border border-indigo-100 p-3 rounded-xl">
+                            <div className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                              <Sparkles className="w-4 h-4 text-indigo-600" />
+                              <span>100% Free AI Auto-Grader</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleFetchAutoGrade(item.id)}
+                              disabled={autoGradeLoadingId === item.id}
+                              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow transition disabled:opacity-60 flex items-center gap-1"
+                            >
+                              {autoGradeLoadingId === item.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Wand2 className="w-3.5 h-3.5" />
+                              )}
+                              <span>Analyze & Suggest Grade</span>
+                            </button>
+                          </div>
+
+                          {/* Auto-Grade Panel Display */}
+                          <AutoGradePanel
+                            assignmentId={String(item.id)}
+                            autoGradeData={autoGradeRecs[item.id]}
+                            loading={autoGradeLoadingId === item.id}
+                            onApply={(suggestedMarks, suggestedFeedback) => {
+                              setDrafts((current) => ({
+                                ...current,
+                                [item.id]: {
+                                  ...draft,
+                                  marks: String(suggestedMarks),
+                                  teacher_note: suggestedFeedback,
+                                }
+                              }));
+                              setMessage(`Applied AI suggested grade (${suggestedMarks}) to assignment #${item.id}`);
+                            }}
+                          />
+
                           <div className="grid gap-3 sm:grid-cols-2">
                             <div>
                               <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -489,6 +719,7 @@ export default function TeacherDashboardPage() {
                               />
                             </div>
                           </div>
+
 
                           <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -553,10 +784,20 @@ export default function TeacherDashboardPage() {
           </div>
         ) : null}
 
+        {/* 100% Free Plagiarism Modal */}
+        <PlagiarismModal
+          isOpen={plagiarismModalOpen}
+          onClose={() => setPlagiarismModalOpen(false)}
+          subjectName={plagiarismSubject}
+          reportData={plagiarismData}
+          loading={plagiarismLoading}
+        />
+
       </div>
     </AppShell>
   );
 }
+
 
 function StatCard({ 
   label, 
